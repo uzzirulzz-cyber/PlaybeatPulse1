@@ -95,7 +95,7 @@ export function LoginView() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@playbeat"
+                  placeholder="admin@playbeat.digital"
                   className="min-h-[44px] border-cyan-400/20 bg-white/[0.04] pl-9 text-slate-100 placeholder:text-slate-500 focus:border-cyan-400/60 focus-visible:ring-cyan-400/40"
                 />
               </div>
