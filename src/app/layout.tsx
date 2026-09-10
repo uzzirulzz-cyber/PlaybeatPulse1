@@ -16,17 +16,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LeadPulse — Business Lead Generator",
+  title: "PlayBeat Lead Extractor — MORE LEADS • SMARTER GROWTH",
   description:
-    "LeadPulse — production-ready business lead discovery from permitted public sources (OpenStreetMap + public website contact pages).",
+    "PlayBeat Lead Extractor — production-grade business lead discovery from permitted public sources. Real business emails, WhatsApp numbers, and phones — no mock data.",
   keywords: [
-    "LeadPulse",
+    "PlayBeat",
+    "Lead Pulse",
     "lead generation",
-    "B2B",
-    "OpenStreetMap",
-    "business leads",
+    "B2B leads",
+    "business email discovery",
+    "WhatsApp leads",
   ],
-  authors: [{ name: "LeadPulse" }],
+  authors: [{ name: "PlayBeat" }],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
@@ -38,14 +39,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="playbeat-dark">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         <ThemeProvider
           attribute="class"
-          defaultTheme="light"
-          enableSystem
+          defaultTheme="dark"
+          enableSystem={false}
           disableTransitionOnChange
         >
           <QueryProvider>
