@@ -117,7 +117,8 @@ export function buildOverpassQuery(input: OverpassQueryInput): string {
     areaSetup = `area["name"="${input.areaName}"]->.searchArea;`;
     areaFilter = "(area.searchArea)";
   } else if (input.bbox) {
-    areaFilter = `${input.bbox[0]},${input.bbox[1]},${input.bbox[2]},${input.bbox[3]}`;
+    // bbox filter must be in parentheses: (south,west,north,east)
+    areaFilter = `(${input.bbox[0]},${input.bbox[1]},${input.bbox[2]},${input.bbox[3]})`;
   } else if (input.around) {
     areaFilter = `(around:${input.around.radius},${input.around.lat},${input.around.lng})`;
   }
