@@ -507,12 +507,23 @@ export async function processCampaignBatch(campaignId: string, timeBudgetMs = 15
 
   // Initialize if not yet running (queued or first tick of running)
   let state = stateCache.get(campaignId);
+  const justInitialized = !state;
   if (!state) {
     state = await initCampaign(parsed);
     if (!state) {
       const stats = readStats(campaign);
       return { campaignId, status: "failed", progress: 0, stats, target: parsed.target, message: "Discovery failed", done: true };
     }
+    // Return immediately after discovery — don't process businesses in the same
+    // tick. This ensures the function returns within the Vercel 10s timeout.
+    // The next tick will start processing.
+    const freshStats = readStats(await db.campaign.findUnique({ where: { id: campaignId } }) || campaign);
+    return {
+      campaignId, status: "running", progress: 0,
+      stats: freshStats, target: parsed.target,
+      message: `Discovered ${state.businesses.length} businesses. Starting extraction…`,
+      done: false,
+    };
   }
 
   const scoring = await getScoringConfig();
@@ -521,9 +532,11 @@ export async function processCampaignBatch(campaignId: string, timeBudgetMs = 15
   let recentLead: any = null;
   let processed = 0;
 
-  // Process businesses until time budget exhausted, target reached, or list exhausted
+  // Process businesses until time budget exhausted, target reached, or list exhausted.
+  // On Vercel (10s function limit), this typically processes 1-2 businesses per tick.
   while (state.index < state.businesses.length && stats.validContacts < parsed.target) {
     if (Date.now() - startTime > timeBudgetMs) break;
+    if (processed >= 2) break; // max 2 businesses per tick (website analysis is slow)
     if (await shouldStop(campaignId)) {
       const c2 = await db.campaign.findUnique({ where: { id: campaignId } });
       return { campaignId, status: c2?.status || "paused", progress: c2?.progress || 0, stats: readStats(c2!), target: parsed.target, message: "Stopped", done: false };
