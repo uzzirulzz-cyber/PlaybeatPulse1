@@ -206,7 +206,7 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
       if (!q) continue;
       try {
         console.log(`[worker] Overpass query (tag=${tag}, bbox=${!!queryBbox}): ${q.slice(0, 120)}...`);
-        const elements = await runOverpassQuery(q, { timeoutMs: 6000, maxEndpoints: 2 });
+        const elements = await runOverpassQuery(q, { timeoutMs: 15000, maxEndpoints: 3 });
         console.log(`[worker] Overpass returned ${elements.length} elements for tag=${tag}`);
         const seenOsmIds = new Set(businesses.map(b => b.osmId));
         for (const el of elements) {

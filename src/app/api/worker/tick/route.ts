@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const result = await processCampaignBatch(id, Math.min(8000, Math.max(3000, timeBudget)));
+    const result = await processCampaignBatch(id, Math.min(45000, Math.max(3000, timeBudget)));
     return NextResponse.json(result);
   } catch (e: any) {
     console.error("[worker/tick] error:", e);
