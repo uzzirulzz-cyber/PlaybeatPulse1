@@ -136,7 +136,7 @@ export function buildOverpassQuery(input: OverpassQueryInput): string {
     }
   }
   const limit = input.limit ? `\nout center ${input.limit};` : "\nout center 500;";
-  return `[out:json][timeout:25];${areaSetup}(${parts.join("")});${limit}`;
+  return `[out:json][timeout:8];${areaSetup}(${parts.join("")});${limit}`;
 }
 
 // Run the query against Overpass with failover between endpoints.

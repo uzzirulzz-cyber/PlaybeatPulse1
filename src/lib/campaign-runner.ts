@@ -171,18 +171,15 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
   try {
     let overpassQuery: string;
     const queryLimit = Math.min(200, parsed.target * 3);
-    if (area) {
+    // Prefer area-name query (faster — uses Overpass's internal area index)
+    const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
+    if (areaName) {
+      overpassQuery = buildOverpassQuery({ areaName, tags, limit: queryLimit });
+    } else if (area) {
       const bbox: [number, number, number, number] = [area.boundingBox[0], area.boundingBox[2], area.boundingBox[1], area.boundingBox[3]];
       overpassQuery = buildOverpassQuery({ bbox, tags, limit: queryLimit });
     } else {
-      // No geocoding — use Overpass's built-in area lookup by city/area name
-      const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
-      if (areaName) {
-        overpassQuery = buildOverpassQuery({ areaName, tags, limit: queryLimit });
-      } else {
-        // No location at all — skip Overpass
-        overpassQuery = "";
-      }
+      overpassQuery = "";
     }
     if (overpassQuery) {
       console.log(`[worker] Overpass query: ${overpassQuery.slice(0, 200)}...`);
@@ -202,13 +199,20 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
     await logJob(parsed.id, "discover", "failed", { source: "overpass" }, null, e?.message, "SOURCE_RATE_LIMITED");
   }
 
-  // SECONDARY: web-search discovery (z-ai SDK — works in sandbox, may fail on Vercel)
-  if (businesses.length < parsed.target) {
+  // SECONDARY: web-search discovery (z-ai SDK — only works in sandbox, not on Vercel)
+  // Skip entirely if Overpass already found enough businesses, to save time.
+  if (businesses.length < parsed.target && businesses.length < 10) {
     try {
-      const searchResults = await discoverBusinessesViaSearch(parsed.business, parsed.location, {
-        perQuery: Math.min(20, Math.max(10, Math.ceil(parsed.target / 5))),
-        maxResults: Math.min(300, (parsed.target - businesses.length) * 3),
+      // Wrap in a 3s timeout — on Vercel the z-ai API resolves to internal IPs
+      // and will timeout. We don't want it to eat the entire function budget.
+      const searchPromise = discoverBusinessesViaSearch(parsed.business, parsed.location, {
+        perQuery: 10,
+        maxResults: 50,
       });
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("websearch-timeout")), 3000)
+      );
+      const searchResults = await Promise.race([searchPromise, timeoutPromise]);
       const seenDomains = new Set(businesses.map((b) => parseDomain(b.website)).filter(Boolean) as string[]);
       for (const r of searchResults) {
         if (businesses.length >= parsed.target * 3) break;
