@@ -513,3 +513,33 @@ Stage Summary:
 - 16 server-enforced operating rules.
 - Full audit logging, health monitoring, CSV/XLSX/JSON exports.
 - All admin APIs auth-protected; secrets in env vars only.
+
+---
+Task ID: PB-EXTRACTION-FIX
+Agent: main
+Task: Fix extraction failures — Overpass query syntax + timeout tuning
+
+Root Cause Analysis:
+1. **CRITICAL BUG**: Overpass bbox query was missing parentheses — emitted `node["tag"]52.3,13.2,...` (invalid syntax, HTTP 400 parse error) instead of `node["tag"](52.3,13.2,...)`. This caused ALL bbox-based extractions to fail.
+2. **Timeout too short**: 6-8s fetch timeout was insufficient for Overpass API on large cities (Berlin restaurants need ~10s).
+3. **Multi-tag queries too heavy**: Querying 7 tags at once exceeded the time budget.
+4. **Vercel 10s function limit**: Hobby plan limited serverless functions to 10s, not enough for Overpass + geocoding + processing.
+
+Fixes Applied:
+- **bbox syntax**: Wrapped bbox coordinates in parentheses in `buildOverpassQuery()` — `node["tag"](s,w,n,e)`.
+- **vercel.json**: Increased `maxDuration` to 60s for worker/tick route (Pro plan).
+- **Overpass fetch timeout**: 15s per query (was 6-8s).
+- **Tick budget**: 45s (was 8s).
+- **Single-tag queries**: Try each OSM tag individually (was multi-tag in one query) — faster, more reliable.
+- **Smaller bbox**: 0.3°×0.3° (~33km) centered on city (was 0.4° or full admin boundary).
+- **kumi.systems first**: Reordered Overpass endpoints — kumi is more reliable from Vercel than overpass-api.de.
+- **Geocode race**: Nominatim geocoding raced against 3s timeout (won't block discovery if slow).
+- **3 endpoints per query**: Try up to 3 Overpass mirrors per tag (was 2).
+
+Verified Results (Vercel production):
+- Berlin restaurants: **300 businesses discovered**, 8 leads processed (real emails + phones: aida-camillo@web.de, +493031806750).
+- Dashboard: 106 total leads, 19 emails, 79 phones, 4 active sources.
+- Extraction pipeline fully functional — discovery → website analysis → email/phone extraction → validation → dedup → scoring → persist.
+
+Known limitation:
+- Dubai real estate: OSM coverage for `office=estate_agent` is sparse in the UAE (not a code bug — the data simply doesn't exist in OpenStreetMap for that region/tag combination). The system correctly reports "No public businesses were found" rather than fabricating data.
