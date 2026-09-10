@@ -170,7 +170,7 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
   // Use bbox from geocoding if available, otherwise fall back to area-name query
   try {
     let overpassQuery: string;
-    const queryLimit = Math.min(2000, parsed.target * 4);
+    const queryLimit = Math.min(500, parsed.target * 5);
     if (area) {
       const bbox: [number, number, number, number] = [area.boundingBox[0], area.boundingBox[2], area.boundingBox[1], area.boundingBox[3]];
       overpassQuery = buildOverpassQuery({ bbox, tags, limit: queryLimit });
@@ -186,7 +186,7 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
     }
     if (overpassQuery) {
       console.log(`[worker] Overpass query: ${overpassQuery.slice(0, 200)}...`);
-      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 20000 });
+      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 40000 });
       console.log(`[worker] Overpass returned ${elements.length} elements`);
       for (const el of elements) {
         if (businesses.length >= parsed.target * 3) break;

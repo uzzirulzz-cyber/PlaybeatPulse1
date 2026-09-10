@@ -81,9 +81,9 @@ export function tagsForNature(nature?: string): { tags: string[]; specific: bool
   if (!nature) return { tags: GENERIC_TAGS, specific: false };
   for (const entry of NATURE_TO_TAGS) {
     if (entry.match.test(nature)) {
-      // Only use the first (most specific) tag to keep Overpass queries small.
-      // Large multi-tag queries get rate-limited (HTTP 429) on public endpoints.
-      return { tags: entry.tags.slice(0, 2), specific: true };
+      // Only use the FIRST (most specific) tag to keep Overpass queries small.
+      // Large multi-tag queries on big cities timeout/rate-limit on public endpoints.
+      return { tags: [entry.tags[0]], specific: true };
     }
   }
   return { tags: GENERIC_TAGS, specific: false };
@@ -133,8 +133,8 @@ export function buildOverpassQuery(input: OverpassQueryInput): string {
       parts.push(`node["${tag}"]${areaFilter};way["${tag}"]${areaFilter};`);
     }
   }
-  const limit = input.limit ? `\nout center ${input.limit};` : "\nout center 5000;";
-  return `[out:json][timeout:60];${areaSetup}(${parts.join("")});${limit}`;
+  const limit = input.limit ? `\nout center ${input.limit};` : "\nout center 500;";
+  return `[out:json][timeout:25];${areaSetup}(${parts.join("")});${limit}`;
 }
 
 // Run the query against Overpass with failover between endpoints.
