@@ -1,9 +1,13 @@
 // LeadPulse API — Recent exports
 // GET /api/exports → Export[]
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const rows = await db.export.findMany({
       orderBy: { createdAt: "desc" },

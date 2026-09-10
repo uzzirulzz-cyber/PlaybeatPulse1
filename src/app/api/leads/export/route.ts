@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { audit } from "@/app/api/_lib/serialize";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 import * as XLSX from "xlsx";
 import * as fs from "fs";
 import * as path from "path";
@@ -123,6 +124,9 @@ function buildXlsxBuffer(rows: any[]): Buffer {
 }
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const body = (await req.json().catch(() => null)) as ExportBody | null;
     if (!body) {

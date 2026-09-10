@@ -4,12 +4,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { serializeSuppression, audit } from "@/app/api/_lib/serialize";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
 const ALLOWED_TYPES = new Set([
   "email", "phone", "whatsapp", "domain", "business_name", "website",
 ]);
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const rows = await db.suppressionEntry.findMany({
       orderBy: { createdAt: "desc" },
@@ -22,6 +26,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") {

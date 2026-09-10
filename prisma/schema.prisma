@@ -334,6 +334,8 @@ model AuditLog {
   id        String   @id @default(cuid())
   userId    String?
   user      User?    @relation(fields: [userId], references: [id])
+  adminId   String?
+  admin     Admin?   @relation("AdminAuditLogs", fields: [adminId], references: [id])
   campaignId String?
   campaign   Campaign? @relation(fields: [campaignId], references: [id])
 
@@ -345,6 +347,7 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@index([adminId])
   @@index([campaignId])
   @@index([action])
 }
@@ -358,4 +361,124 @@ model SystemSetting {
   value     String   // JSON string
   category  String   @default("general") // scoring | limits | sources | compliance
   updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Admin (authentication) — credentials come from env vars (ADMIN_EMAIL/ADMIN_PASSWORD),
+// never stored in DB. This model tracks admin sessions and profile metadata.
+// ---------------------------------------------------------------------------
+
+model Admin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  role         String   @default("admin") // admin | superadmin
+  lastLoginAt  DateTime?
+  lastLoginIp  String?
+  loginAttempts Int    @default(0)
+  lockedUntil  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions AdminSession[]
+  auditLogs AuditLog[] @relation("AdminAuditLogs")
+}
+
+model AdminSession {
+  id        String   @id @default(cuid())
+  adminId   String
+  admin     Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  token     String   @unique // JWT token hash
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  ip        String?
+  userAgent String?
+
+  @@index([adminId])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Bot System — 10 bot types with status, config, health, run history
+// ---------------------------------------------------------------------------
+
+model Bot {
+  id           String   @id @default(cuid())
+  type         String   @unique // discovery | extraction | dedup | validation | enrichment | classification | scoring | cleanup | monitoring | scheduler
+  name         String
+  description  String?
+  enabled      Boolean  @default(true)
+  status       String   @default("idle") // idle | running | paused | failed | disabled
+  currentTask  String?
+  lastRunAt    DateTime?
+  lastHeartbeat DateTime?
+  successCount Int      @default(0)
+  failureCount Int      @default(0)
+  lastError    String?
+  config       String?  // JSON: { retryPolicy, interval, maxRetries, ... }
+  queueDepth   Int      @default(0)
+  jobsProcessed Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  runs BotRun[]
+
+  @@index([status])
+  @@index([enabled])
+}
+
+model BotRun {
+  id          String   @id @default(cuid())
+  botId       String
+  bot         Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  status      String   @default("running") // running | completed | failed | retry
+  task        String?
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  duration    Int?     // ms
+  result      String?  // JSON summary
+  error       String?
+  attempts    Int      @default(1)
+
+  @@index([botId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// System Rules — IMPORTANT OPERATING RULES (server-enforced)
+// ---------------------------------------------------------------------------
+
+model SystemRule {
+  id          String   @id @default(cuid())
+  number      Int      @unique // 1-16
+  title       String
+  description String
+  enabled     Boolean  @default(true)
+  enforced    Boolean  @default(true) // server-side enforced (cannot be disabled via UI)
+  category    String   @default("operating") // operating | data | security
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Source Health — track per-source availability, rate limits, errors
+// ---------------------------------------------------------------------------
+
+model SourceHealth {
+  id                  String   @id @default(cuid())
+  sourceId            String?  // links to Source (optional — source may be dynamic)
+  sourceName          String
+  status              String   @default("unknown") // healthy | degraded | down | blocked | unknown
+  lastSuccessAt       DateTime?
+  lastErrorAt         DateTime?
+  lastError           String?
+  consecutiveFailures Int      @default(0)
+  totalRequests       Int      @default(0)
+  totalSuccesses      Int      @default(0)
+  rateLimited         Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([sourceName])
+  @@index([status])
 }

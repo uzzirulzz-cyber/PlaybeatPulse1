@@ -12,6 +12,7 @@ import { scoreFromRaw } from "./scoring";
 import { DupIndex, buildDupKey } from "./dedup";
 import { parseDomain } from "./ssrf";
 import { getScoringConfig, getCampaignLimits } from "./settings";
+import { heartbeat, recordBotRun } from "./bots";
 import type { CampaignStats, LocationFilters, BusinessFilters, ContactFilters, QualityFilters } from "./types";
 
 // In-memory cache of discovered businesses per campaign (survives across ticks
@@ -152,6 +153,8 @@ async function logJob(campaignId: string, type: string, status: string, input: a
 // ---------------------------------------------------------------------------
 async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | null> {
   const limits = await getCampaignLimits();
+  await heartbeat("scheduler", `Initializing campaign ${parsed.id}`);
+  await heartbeat("discovery", `Querying sources for ${parsed.name}`);
 
   // Geocode (non-fatal)
   let defaultCountry = parsed.location.country || "";
@@ -281,6 +284,12 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
     where: { id: parsed.id },
     data: { businessesDiscovered: businesses.length, status: "running", startedAt: new Date(), errorMessage: null },
   });
+
+  await recordBotRun("discovery", "completed", {
+    task: `Discovered ${businesses.length} businesses for ${parsed.name}`,
+    result: { count: businesses.length },
+  });
+  await recordBotRun("scheduler", "completed", { task: `Initialized campaign ${parsed.id}` });
 
   return state;
 }
@@ -534,6 +543,7 @@ export async function processCampaignBatch(campaignId: string, timeBudgetMs = 15
 
   // Process businesses until time budget exhausted, target reached, or list exhausted.
   // On Vercel (10s function limit), this typically processes 1-2 businesses per tick.
+  await heartbeat("extraction", `Processing business ${state.index + 1}/${state.businesses.length}`);
   while (state.index < state.businesses.length && stats.validContacts < parsed.target) {
     if (Date.now() - startTime > timeBudgetMs) break;
     if (processed >= 2) break; // max 2 businesses per tick (website analysis is slow)
@@ -601,6 +611,17 @@ export async function processCampaignBatch(campaignId: string, timeBudgetMs = 15
 
   let message = `Processed ${processed} businesses`;
   if (done) message = reachedTarget ? `Target reached (${stats.validContacts} leads)` : `All sources exhausted (${stats.validContacts} leads)`;
+
+  // Record bot runs for this tick (best-effort, non-blocking)
+  if (processed > 0) {
+    await recordBotRun("extraction", "completed", { task: `Processed ${processed} businesses`, result: { processed, validContacts: stats.validContacts } });
+    await recordBotRun("validation", "completed", { task: `Validated ${processed} records` });
+    await recordBotRun("dedup", "completed", { task: `Dedup check for ${processed} records`, result: { duplicates: stats.duplicatesRemoved } });
+    await recordBotRun("scoring", "completed", { task: `Scored ${stats.validContacts} leads` });
+  }
+  if (done) {
+    await recordBotRun("scheduler", "completed", { task: `Campaign ${campaignId} ${done ? "completed" : "running"}`, result: { stats } });
+  }
 
   return {
     campaignId, status: done ? "completed" : "running",

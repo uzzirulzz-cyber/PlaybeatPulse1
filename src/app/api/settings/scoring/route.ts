@@ -4,8 +4,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getScoringConfig, setScoringConfig } from "@/lib/settings";
 import type { ScoringConfig } from "@/lib/types";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const cfg = await getScoringConfig();
     return NextResponse.json(cfg);
@@ -16,6 +20,9 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const body = (await req.json().catch(() => null)) as ScoringConfig | null;
     if (!body || typeof body !== "object") {

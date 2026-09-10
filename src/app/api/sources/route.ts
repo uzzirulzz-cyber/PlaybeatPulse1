@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { seedDefaults } from "@/lib/settings";
 import { serializeSource, audit } from "@/app/api/_lib/serialize";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
 // Seed defaults once on first module load (best-effort)
 let seeded: Promise<void> | null = null;
@@ -18,7 +19,10 @@ function ensureSeed(): Promise<void> {
   return seeded;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     await ensureSeed();
     const sources = await db.source.findMany({
@@ -34,6 +38,9 @@ export async function GET() {
 const ALLOWED_TYPES = new Set(["overpass", "nominatim", "websearch", "website", "directory"]);
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") {

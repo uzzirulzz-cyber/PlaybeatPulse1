@@ -2,10 +2,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { serializeCampaign, audit } from "@/app/api/_lib/serialize";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function POST(_req: NextRequest, ctx: Ctx) {
+export async function POST(req: NextRequest, ctx: Ctx) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const { id } = await ctx.params;
     const existing = await db.campaign.findUnique({ where: { id } });

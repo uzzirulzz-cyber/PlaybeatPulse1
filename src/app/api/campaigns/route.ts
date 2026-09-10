@@ -5,8 +5,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCampaignLimits } from "@/lib/settings";
 import { serializeCampaign, stringifyJson, audit } from "@/app/api/_lib/serialize";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const campaigns = await db.campaign.findMany({
       orderBy: { createdAt: "desc" },
@@ -21,6 +25,9 @@ export async function GET() {
 const ALLOWED_TARGETS = new Set([100, 250, 500, 1000, 2500, 5000]);
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") {

@@ -1,11 +1,15 @@
 // LeadPulse — Worker tick endpoint (polled by frontend for batch processing)
 import { NextRequest, NextResponse } from "next/server";
 import { processCampaignBatch, findNextCampaign } from "@/lib/campaign-runner";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
 // POST /api/worker/tick?campaignId=X
 // Processes a time-bounded batch of the specified campaign (or the next queued one).
 // Returns updated progress. The frontend polls this every 3s while campaigns are active.
 export async function POST(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const url = new URL(req.url);
     const campaignId = url.searchParams.get("campaignId");

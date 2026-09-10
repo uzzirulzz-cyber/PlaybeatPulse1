@@ -3,10 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { serializeLead, audit, toDate } from "@/app/api/_lib/serialize";
 import { gradeFromScore } from "@/lib/scoring";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(_req: NextRequest, ctx: Ctx) {
+export async function GET(req: NextRequest, ctx: Ctx) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const { id } = await ctx.params;
     const lead = await db.lead.findUnique({
@@ -32,6 +36,9 @@ const ALLOWED_PATCH_FIELDS = new Set([
 ]);
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const { id } = await ctx.params;
     const existing = await db.lead.findUnique({ where: { id } });
@@ -118,7 +125,10 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   }
 }
 
-export async function DELETE(_req: NextRequest, ctx: Ctx) {
+export async function DELETE(req: NextRequest, ctx: Ctx) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const { id } = await ctx.params;
     const existing = await db.lead.findUnique({

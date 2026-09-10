@@ -1,8 +1,9 @@
 // LeadPulse API — Analytics (computed from real DB aggregations)
 // GET /api/analytics → AnalyticsData
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import type { AnalyticsData } from "@/lib/types";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
 function startOfToday(): Date {
   const d = new Date();
@@ -10,7 +11,10 @@ function startOfToday(): Date {
   return d;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const startToday = startOfToday();
 

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { serializeLead } from "@/app/api/_lib/serialize";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
 function parseBool(v: string | null): boolean | undefined {
   if (v === null) return undefined;
@@ -13,6 +14,9 @@ function parseBool(v: string | null): boolean | undefined {
 }
 
 export async function GET(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const url = new URL(req.url);
     const sp = url.searchParams;

@@ -7,8 +7,12 @@ import {
   setCampaignLimits,
   type CampaignLimits,
 } from "@/lib/settings";
+import { requireAdmin } from "@/app/api/_lib/auth-guard";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const limits = await getCampaignLimits();
     return NextResponse.json(limits);
@@ -19,6 +23,9 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAdmin(req);
+  if (error) return error;
+
   try {
     const body = (await req.json().catch(() => null)) as Partial<CampaignLimits> | null;
     if (!body || typeof body !== "object") {
