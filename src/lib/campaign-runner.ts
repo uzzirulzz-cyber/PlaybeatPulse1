@@ -167,20 +167,33 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
   const businesses: DiscoveredBusiness[] = [];
 
   // PRIMARY: Overpass (OpenStreetMap) — public API, works from Vercel + sandbox
-  if (area) {
-    try {
+  // Use bbox from geocoding if available, otherwise fall back to area-name query
+  try {
+    let overpassQuery: string;
+    const queryLimit = Math.min(2000, parsed.target * 4);
+    if (area) {
       const bbox: [number, number, number, number] = [area.boundingBox[0], area.boundingBox[2], area.boundingBox[1], area.boundingBox[3]];
-      const queryLimit = Math.min(2000, parsed.target * 4);
-      const overpassQuery = buildOverpassQuery({ bbox, tags, limit: queryLimit });
+      overpassQuery = buildOverpassQuery({ bbox, tags, limit: queryLimit });
+    } else {
+      // No geocoding — use Overpass's built-in area lookup by city/area name
+      const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
+      if (areaName) {
+        overpassQuery = buildOverpassQuery({ areaName, tags, limit: queryLimit });
+      } else {
+        // No location at all — skip Overpass
+        overpassQuery = "";
+      }
+    }
+    if (overpassQuery) {
       const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 30000 });
       for (const el of elements) {
         if (businesses.length >= parsed.target * 3) break;
         const b = elementToBusiness(el, defaultCountry);
         if (b) businesses.push(b);
       }
-    } catch (e: any) {
-      await logJob(parsed.id, "discover", "failed", { source: "overpass" }, null, e?.message, "SOURCE_RATE_LIMITED");
     }
+  } catch (e: any) {
+    await logJob(parsed.id, "discover", "failed", { source: "overpass" }, null, e?.message, "SOURCE_RATE_LIMITED");
   }
 
   // SECONDARY: web-search discovery (z-ai SDK — works in sandbox, may fail on Vercel)

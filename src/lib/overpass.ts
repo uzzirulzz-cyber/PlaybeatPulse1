@@ -87,30 +87,38 @@ export function tagsForNature(nature?: string): { tags: string[]; specific: bool
 export interface OverpassQueryInput {
   bbox?: [south: number, west: number, north: number, east: number]; // bounding box
   around?: { lat: number; lng: number; radius: number }; // radius in meters
+  areaName?: string; // OSM area name (e.g. "Berlin") — no geocoding needed
   tags: string[];
   limit?: number;
 }
 
 export function buildOverpassQuery(input: OverpassQueryInput): string {
-  const area = input.bbox
-    ? `${input.bbox[0]},${input.bbox[1]},${input.bbox[2]},${input.bbox[3]}`
-    : input.around
-    ? `(around:${input.around.radius},${input.around.lat},${input.around.lng})`
-    : "";
+  let areaFilter = "";
+  let areaSetup = "";
+
+  if (input.areaName) {
+    // Use Overpass's built-in area lookup by name (no geocoding required)
+    areaSetup = `area["name"="${input.areaName}"]->.searchArea;`;
+    areaFilter = "(area.searchArea)";
+  } else if (input.bbox) {
+    areaFilter = `${input.bbox[0]},${input.bbox[1]},${input.bbox[2]},${input.bbox[3]}`;
+  } else if (input.around) {
+    areaFilter = `(around:${input.around.radius},${input.around.lat},${input.around.lng})`;
+  }
 
   const parts: string[] = [];
   for (const tag of input.tags) {
     if (tag.includes("=")) {
       const [k, vRaw] = tag.split("=");
       const v = vRaw.replace(/"/g, "");
-      parts.push(`node["${k}"="${v}"]${area};way["${k}"="${v}"]${area};`);
+      parts.push(`node["${k}"="${v}"]${areaFilter};way["${k}"="${v}"]${areaFilter};`);
     } else {
       // bare key presence
-      parts.push(`node["${tag}"]${area};way["${tag}"]${area};`);
+      parts.push(`node["${tag}"]${areaFilter};way["${tag}"]${areaFilter};`);
     }
   }
   const limit = input.limit ? `\nout center ${input.limit};` : "\nout center 5000;";
-  return `[out:json][timeout:60];(${parts.join("")});${limit}`;
+  return `[out:json][timeout:60];${areaSetup}(${parts.join("")});${limit}`;
 }
 
 // Run the query against Overpass with failover between endpoints.
