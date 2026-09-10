@@ -166,54 +166,56 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
 
   const businesses: DiscoveredBusiness[] = [];
 
-  // PRIMARY: web-search discovery
-  try {
-    const searchResults = await discoverBusinessesViaSearch(parsed.business, parsed.location, {
-      perQuery: Math.min(20, Math.max(10, Math.ceil(parsed.target / 5))),
-      maxResults: Math.min(400, parsed.target * 5),
-    });
-    for (const r of searchResults) {
-      const cleanName = cleanBusinessName(r.name, r.domain);
-      businesses.push({
-        osmId: `web/${r.domain}`, osmType: "node",
-        name: cleanName,
-        category: parsed.business.category || parsed.business.nature || "business",
-        subcategory: parsed.business.subcategory || parsed.business.industry || natureLabel,
-        website: r.website,
-        phone: r.snippetPhones[0] || undefined,
-        email: r.snippetEmails[0] || undefined,
-        whatsapp: r.snippetWhatsapps[0] || undefined,
-        city: parsed.location.city, state: parsed.location.state,
-        country: defaultCountry || parsed.location.country,
-        postalCode: parsed.location.postal,
-        address: undefined, lat: area?.lat, lng: area?.lng,
-        socialProfiles: undefined, sourceName: "Web Search", sourceUrl: r.sourceUrl,
-        raw: { hostName: r.hostName, domain: r.domain, snippetEmails: r.snippetEmails, snippetPhones: r.snippetPhones },
-      });
-    }
-  } catch (e: any) {
-    await logJob(parsed.id, "discover", "failed", { source: "websearch" }, null, e?.message, "PROVIDER_ERROR");
-  }
-
-  // SECONDARY: Overpass (if reachable)
-  if (area && businesses.length < parsed.target) {
+  // PRIMARY: Overpass (OpenStreetMap) — public API, works from Vercel + sandbox
+  if (area) {
     try {
       const bbox: [number, number, number, number] = [area.boundingBox[0], area.boundingBox[2], area.boundingBox[1], area.boundingBox[3]];
-      const queryLimit = Math.min(1500, (parsed.target - businesses.length) * 2);
+      const queryLimit = Math.min(2000, parsed.target * 4);
       const overpassQuery = buildOverpassQuery({ bbox, tags, limit: queryLimit });
-      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 25000 });
-      const seenDomains = new Set(businesses.map((b) => parseDomain(b.website)).filter(Boolean) as string[]);
+      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 30000 });
       for (const el of elements) {
         if (businesses.length >= parsed.target * 3) break;
         const b = elementToBusiness(el, defaultCountry);
-        if (!b) continue;
-        const dom = b.website ? parseDomain(b.website) : null;
-        if (dom && seenDomains.has(dom)) continue;
-        if (dom) seenDomains.add(dom);
-        businesses.push(b);
+        if (b) businesses.push(b);
       }
     } catch (e: any) {
       await logJob(parsed.id, "discover", "failed", { source: "overpass" }, null, e?.message, "SOURCE_RATE_LIMITED");
+    }
+  }
+
+  // SECONDARY: web-search discovery (z-ai SDK — works in sandbox, may fail on Vercel)
+  if (businesses.length < parsed.target) {
+    try {
+      const searchResults = await discoverBusinessesViaSearch(parsed.business, parsed.location, {
+        perQuery: Math.min(20, Math.max(10, Math.ceil(parsed.target / 5))),
+        maxResults: Math.min(300, (parsed.target - businesses.length) * 3),
+      });
+      const seenDomains = new Set(businesses.map((b) => parseDomain(b.website)).filter(Boolean) as string[]);
+      for (const r of searchResults) {
+        if (businesses.length >= parsed.target * 3) break;
+        const dom = parseDomain(r.website);
+        if (dom && seenDomains.has(dom)) continue;
+        if (dom) seenDomains.add(dom);
+        const cleanName = cleanBusinessName(r.name, r.domain);
+        businesses.push({
+          osmId: `web/${r.domain}`, osmType: "node",
+          name: cleanName,
+          category: parsed.business.category || parsed.business.nature || "business",
+          subcategory: parsed.business.subcategory || parsed.business.industry || natureLabel,
+          website: r.website,
+          phone: r.snippetPhones[0] || undefined,
+          email: r.snippetEmails[0] || undefined,
+          whatsapp: r.snippetWhatsapps[0] || undefined,
+          city: parsed.location.city, state: parsed.location.state,
+          country: defaultCountry || parsed.location.country,
+          postalCode: parsed.location.postal,
+          address: undefined, lat: area?.lat, lng: area?.lng,
+          socialProfiles: undefined, sourceName: "Web Search", sourceUrl: r.sourceUrl,
+          raw: { hostName: r.hostName, domain: r.domain, snippetEmails: r.snippetEmails, snippetPhones: r.snippetPhones },
+        });
+      }
+    } catch (e: any) {
+      await logJob(parsed.id, "discover", "failed", { source: "websearch" }, null, e?.message, "PROVIDER_ERROR");
     }
   }
 
