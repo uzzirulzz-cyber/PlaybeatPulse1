@@ -127,16 +127,16 @@ export function buildOverpassQuery(input: OverpassQueryInput): string {
     if (tag.includes("=")) {
       const [k, vRaw] = tag.split("=");
       const v = vRaw.replace(/"/g, "");
-      // Only query nodes (not ways) for faster results — ways are slower and
-      // often duplicate the same businesses as nodes.
-      parts.push(`node["${k}"="${v}"]${areaFilter};`);
+      // Query both nodes and ways — ways are needed for businesses mapped as
+      // building footprints (common for offices, shops in malls, etc.)
+      parts.push(`node["${k}"="${v}"]${areaFilter};way["${k}"="${v}"]${areaFilter};`);
     } else {
       // bare key presence
-      parts.push(`node["${tag}"]${areaFilter};`);
+      parts.push(`node["${tag}"]${areaFilter};way["${tag}"]${areaFilter};`);
     }
   }
   const limit = input.limit ? `\nout center ${input.limit};` : "\nout center 500;";
-  return `[out:json][timeout:8];${areaSetup}(${parts.join("")});${limit}`;
+  return `[out:json][timeout:15];${areaSetup}(${parts.join("")});${limit}`;
 }
 
 // Run the query against Overpass with failover between endpoints.

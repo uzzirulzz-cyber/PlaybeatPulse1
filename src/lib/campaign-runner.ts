@@ -3,7 +3,7 @@
 // This runs inside the persistent Next.js process — no separate worker process needed.
 // Each tick processes a time-bounded batch of businesses, then returns progress.
 import { db } from "./db";
-import { geocodeLocation, buildOverpassQuery, runOverpassQuery, elementToBusiness, tagsForNature, type DiscoveredBusiness } from "./overpass";
+import { geocodeLocation, buildOverpassQuery, runOverpassQuery, elementToBusiness, tagsForNature, allTagsForNature, type DiscoveredBusiness } from "./overpass";
 import { discoverBusinessesViaSearch } from "./websearch";
 import { analyzeWebsite } from "./website";
 import { normalizePhone } from "./phone";
@@ -170,32 +170,55 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
   const businesses: DiscoveredBusiness[] = [];
 
   // PRIMARY: Overpass (OpenStreetMap) — public API, works from Vercel + sandbox
-  // Use bbox from geocoding if available, otherwise fall back to area-name query
+  // Use bbox from Nominatim geocoding (most reliable — area-name lookup fails for
+  // non-English city names like Dubai=دبي). Try multiple tag variants if 0 results.
   try {
-    let overpassQuery: string;
-    const queryLimit = Math.min(200, parsed.target * 3);
-    // Prefer area-name query (faster — uses Overpass's internal area index)
+    const queryLimit = Math.min(300, parsed.target * 3);
+    let allTagsToTry = tags;
+    // If specific match, also include the full tag set as fallback
+    if (specific) {
+      const fullTags = allTagsForNature(parsed.business.nature || parsed.business.industry || parsed.business.category);
+      if (fullTags.length > tags.length) allTagsToTry = fullTags;
+    }
+
+    // Build candidate queries: bbox first (if geocoded), then area-name
+    const queries: { q: string; label: string }[] = [];
+    if (area) {
+      const bbox: [number, number, number, number] = [area.boundingBox[0], area.boundingBox[2], area.boundingBox[1], area.boundingBox[3]];
+      queries.push({ q: buildOverpassQuery({ bbox, tags: allTagsToTry, limit: queryLimit }), label: `bbox ${allTagsToTry.length} tags` });
+      // Also try with just the first tag (faster, broader cities)
+      if (allTagsToTry.length > 1) {
+        queries.push({ q: buildOverpassQuery({ bbox, tags: [allTagsToTry[0]], limit: queryLimit }), label: `bbox first-tag` });
+      }
+    }
     const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
     if (areaName) {
-      overpassQuery = buildOverpassQuery({ areaName, tags, limit: queryLimit });
-    } else if (area) {
-      const bbox: [number, number, number, number] = [area.boundingBox[0], area.boundingBox[2], area.boundingBox[1], area.boundingBox[3]];
-      overpassQuery = buildOverpassQuery({ bbox, tags, limit: queryLimit });
-    } else {
-      overpassQuery = "";
+      queries.push({ q: buildOverpassQuery({ areaName, tags: allTagsToTry, limit: queryLimit }), label: `area "${areaName}"` });
     }
-    if (overpassQuery) {
-      console.log(`[worker] Overpass query: ${overpassQuery.slice(0, 200)}...`);
-      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 8000 });
-      console.log(`[worker] Overpass returned ${elements.length} elements`);
-      for (const el of elements) {
-        if (businesses.length >= parsed.target * 3) break;
-        const b = elementToBusiness(el, defaultCountry);
-        if (b) businesses.push(b);
+
+    for (const { q, label } of queries) {
+      if (businesses.length >= 20) break; // enough to start processing
+      if (!q) continue;
+      try {
+        console.log(`[worker] Overpass query (${label}): ${q.slice(0, 150)}...`);
+        const elements = await runOverpassQuery(q, { timeoutMs: 8000, maxEndpoints: 3 });
+        console.log(`[worker] Overpass (${label}) returned ${elements.length} elements`);
+        const seenOsmIds = new Set(businesses.map(b => b.osmId));
+        for (const el of elements) {
+          if (businesses.length >= parsed.target * 3) break;
+          const b = elementToBusiness(el, defaultCountry);
+          if (b && !seenOsmIds.has(b.osmId)) {
+            seenOsmIds.add(b.osmId);
+            businesses.push(b);
+          }
+        }
+        console.log(`[worker] ${businesses.length} total businesses after "${label}"`);
+      } catch (e: any) {
+        console.log(`[worker] Overpass query "${label}" failed: ${e?.message}`);
       }
-      console.log(`[worker] ${businesses.length} valid businesses after Overpass`);
-    } else {
-      console.log(`[worker] No location for Overpass query (area=${!!area}, city=${parsed.location.city})`);
+    }
+    if (businesses.length === 0) {
+      console.log(`[worker] No businesses found via Overpass (area=${!!area}, city=${areaName})`);
     }
   } catch (e: any) {
     console.error(`[worker] Overpass error: ${e?.message}`);
