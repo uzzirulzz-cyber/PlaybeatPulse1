@@ -170,7 +170,7 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
   // Use bbox from geocoding if available, otherwise fall back to area-name query
   try {
     let overpassQuery: string;
-    const queryLimit = Math.min(500, parsed.target * 5);
+    const queryLimit = Math.min(200, parsed.target * 3);
     if (area) {
       const bbox: [number, number, number, number] = [area.boundingBox[0], area.boundingBox[2], area.boundingBox[1], area.boundingBox[3]];
       overpassQuery = buildOverpassQuery({ bbox, tags, limit: queryLimit });
@@ -186,7 +186,7 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
     }
     if (overpassQuery) {
       console.log(`[worker] Overpass query: ${overpassQuery.slice(0, 200)}...`);
-      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 40000 });
+      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 8000 });
       console.log(`[worker] Overpass returned ${elements.length} elements`);
       for (const el of elements) {
         if (businesses.length >= parsed.target * 3) break;
@@ -319,7 +319,7 @@ async function processBusiness(b: DiscoveredBusiness, state: CampaignState, pars
   if (b.website && state.websitesAnalyzed < state.maxWebsites) {
     state.websitesAnalyzed++;
     try {
-      const analysis = await analyzeWebsite(b.website, { defaultCountry: b.country || state.defaultCountry, maxPages: 3, timeoutMs: 12000 });
+      const analysis = await analyzeWebsite(b.website, { defaultCountry: b.country || state.defaultCountry, maxPages: 2, timeoutMs: 5000 });
       // Pick best email
       if (analysis.emails.length > 0) {
         const sorted = [...analysis.emails].sort((a, c) => c.confidence - a.confidence);

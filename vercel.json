@@ -1,11 +1,10 @@
 {
   "functions": {
     "src/app/api/worker/tick/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 10
     },
     "src/app/api/leads/export/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 10
     }
-  },
-  "crons": []
+  }
 }
