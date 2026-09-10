@@ -31,6 +31,9 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.openstreetmap.fr/api/interpreter",
+  "https://overpass.osm.ch/api/interpreter",
 ];
 
 // Map of common business-nature keywords to OSM tag groups.
@@ -77,9 +80,22 @@ const GENERIC_TAGS = [
 export function tagsForNature(nature?: string): { tags: string[]; specific: boolean } {
   if (!nature) return { tags: GENERIC_TAGS, specific: false };
   for (const entry of NATURE_TO_TAGS) {
-    if (entry.match.test(nature)) return { tags: entry.tags, specific: true };
+    if (entry.match.test(nature)) {
+      // Only use the first (most specific) tag to keep Overpass queries small.
+      // Large multi-tag queries get rate-limited (HTTP 429) on public endpoints.
+      return { tags: entry.tags.slice(0, 2), specific: true };
+    }
   }
   return { tags: GENERIC_TAGS, specific: false };
+}
+
+// Get ALL tags for a nature (used for category labeling, not for querying)
+export function allTagsForNature(nature?: string): string[] {
+  if (!nature) return GENERIC_TAGS;
+  for (const entry of NATURE_TO_TAGS) {
+    if (entry.match.test(nature)) return entry.tags;
+  }
+  return GENERIC_TAGS;
 }
 
 // Build an Overpass QL query. We use an around-area filter by city name OR
@@ -137,11 +153,17 @@ export async function runOverpassQuery(
 
   let lastError: Error | null = null;
   try {
-    for (const endpoint of OVERPASS_ENDPOINTS) {
+    for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
+      const endpoint = OVERPASS_ENDPOINTS[i];
       try {
+        // Small delay between endpoints to be polite (except first)
+        if (i > 0) await new Promise(r => setTimeout(r, 500));
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "LeadPulseBot/1.0 (+https://leadpulse.app/bot)",
+          },
           body: "data=" + encodeURIComponent(query),
           signal: controller.signal,
         });
