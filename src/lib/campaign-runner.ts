@@ -156,11 +156,14 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
   await heartbeat("scheduler", `Initializing campaign ${parsed.id}`);
   await heartbeat("discovery", `Querying sources for ${parsed.name}`);
 
-  // Geocode (non-fatal)
+  // Geocode (non-fatal) — short timeout, skip if slow
   let defaultCountry = parsed.location.country || "";
   let area: any = null;
   try {
-    area = await geocodeLocation(parsed.location);
+    // Race geocoding against a 3s timeout — don't let it eat the 10s function budget
+    const geoPromise = geocodeLocation(parsed.location);
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+    area = await Promise.race([geoPromise, timeoutPromise]);
     if (area) defaultCountry = area.country || defaultCountry;
   } catch { /* non-fatal */ }
 
@@ -210,7 +213,7 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
     if (overpassQuery) {
       try {
         console.log(`[worker] Overpass query (${queryLabel}): ${overpassQuery.slice(0, 150)}...`);
-        const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 8000, maxEndpoints: 3 });
+        const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 6000, maxEndpoints: 2 });
         console.log(`[worker] Overpass returned ${elements.length} elements`);
         for (const el of elements) {
           if (businesses.length >= parsed.target * 3) break;
@@ -222,11 +225,11 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
         console.log(`[worker] Overpass query failed: ${e?.message}`);
         // Fallback: try area-name query if bbox failed
         const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
-        if (areaName && area) {
+        if (areaName) {
           try {
             const fallbackQ = buildOverpassQuery({ areaName, tags: [fullTags[0]], limit: queryLimit });
-            console.log(`[worker] Fallback Overpass (area "${areaName}", first tag): ${fallbackQ.slice(0, 100)}...`);
-            const elements2 = await runOverpassQuery(fallbackQ, { timeoutMs: 5000, maxEndpoints: 2 });
+            console.log(`[worker] Fallback Overpass (area "${areaName}"): ${fallbackQ.slice(0, 100)}...`);
+            const elements2 = await runOverpassQuery(fallbackQ, { timeoutMs: 4000, maxEndpoints: 2 });
             console.log(`[worker] Fallback returned ${elements2.length} elements`);
             for (const el of elements2) {
               if (businesses.length >= parsed.target * 3) break;
