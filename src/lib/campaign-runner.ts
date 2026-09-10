@@ -171,54 +171,76 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
 
   // PRIMARY: Overpass (OpenStreetMap) — public API, works from Vercel + sandbox
   // Use bbox from Nominatim geocoding (most reliable — area-name lookup fails for
-  // non-English city names like Dubai=دبي). Try multiple tag variants if 0 results.
+  // non-English city names like Dubai=دبي). Try ONE query per tick to fit 10s limit.
   try {
     const queryLimit = Math.min(300, parsed.target * 3);
-    let allTagsToTry = tags;
-    // If specific match, also include the full tag set as fallback
-    if (specific) {
-      const fullTags = allTagsForNature(parsed.business.nature || parsed.business.industry || parsed.business.category);
-      if (fullTags.length > tags.length) allTagsToTry = fullTags;
+    const fullTags = specific
+      ? allTagsForNature(parsed.business.nature || parsed.business.industry || parsed.business.category)
+      : tags;
+
+    // Shrink bbox for large cities (Nominatim returns admin boundaries which can
+    // be huge). Cap at ~0.4°×0.4° (~44km×44km) for faster Overpass queries.
+    let queryBbox: [number, number, number, number] | null = null;
+    if (area) {
+      const [s, n, w, e] = area.boundingBox;
+      const latSpan = n - s;
+      const lonSpan = e - w;
+      const maxSpan = 0.4;
+      const cLat = (s + n) / 2;
+      const cLon = (w + e) / 2;
+      const halfLat = Math.min(latSpan / 2, maxSpan / 2);
+      const halfLon = Math.min(lonSpan / 2, maxSpan / 2);
+      queryBbox = [cLat - halfLat, cLon - halfLon, cLat + halfLat, cLon + halfLon];
     }
 
-    // Build candidate queries: bbox first (if geocoded), then area-name
-    const queries: { q: string; label: string }[] = [];
-    if (area) {
-      const bbox: [number, number, number, number] = [area.boundingBox[0], area.boundingBox[2], area.boundingBox[1], area.boundingBox[3]];
-      queries.push({ q: buildOverpassQuery({ bbox, tags: allTagsToTry, limit: queryLimit }), label: `bbox ${allTagsToTry.length} tags` });
-      // Also try with just the first tag (faster, broader cities)
-      if (allTagsToTry.length > 1) {
-        queries.push({ q: buildOverpassQuery({ bbox, tags: [allTagsToTry[0]], limit: queryLimit }), label: `bbox first-tag` });
+    // Build the single best query: bbox with all tags (nodes only, fast)
+    let overpassQuery = "";
+    let queryLabel = "";
+    if (queryBbox) {
+      overpassQuery = buildOverpassQuery({ bbox: queryBbox, tags: fullTags, limit: queryLimit });
+      queryLabel = `bbox ${fullTags.length} tags (shrunk)`;
+    } else {
+      const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
+      if (areaName) {
+        overpassQuery = buildOverpassQuery({ areaName, tags: fullTags, limit: queryLimit });
+        queryLabel = `area "${areaName}"`;
       }
     }
-    const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
-    if (areaName) {
-      queries.push({ q: buildOverpassQuery({ areaName, tags: allTagsToTry, limit: queryLimit }), label: `area "${areaName}"` });
-    }
 
-    for (const { q, label } of queries) {
-      if (businesses.length >= 20) break; // enough to start processing
-      if (!q) continue;
+    if (overpassQuery) {
       try {
-        console.log(`[worker] Overpass query (${label}): ${q.slice(0, 150)}...`);
-        const elements = await runOverpassQuery(q, { timeoutMs: 8000, maxEndpoints: 3 });
-        console.log(`[worker] Overpass (${label}) returned ${elements.length} elements`);
-        const seenOsmIds = new Set(businesses.map(b => b.osmId));
+        console.log(`[worker] Overpass query (${queryLabel}): ${overpassQuery.slice(0, 150)}...`);
+        const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 8000, maxEndpoints: 3 });
+        console.log(`[worker] Overpass returned ${elements.length} elements`);
         for (const el of elements) {
           if (businesses.length >= parsed.target * 3) break;
           const b = elementToBusiness(el, defaultCountry);
-          if (b && !seenOsmIds.has(b.osmId)) {
-            seenOsmIds.add(b.osmId);
-            businesses.push(b);
+          if (b) businesses.push(b);
+        }
+        console.log(`[worker] ${businesses.length} valid businesses after Overpass`);
+      } catch (e: any) {
+        console.log(`[worker] Overpass query failed: ${e?.message}`);
+        // Fallback: try area-name query if bbox failed
+        const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
+        if (areaName && area) {
+          try {
+            const fallbackQ = buildOverpassQuery({ areaName, tags: [fullTags[0]], limit: queryLimit });
+            console.log(`[worker] Fallback Overpass (area "${areaName}", first tag): ${fallbackQ.slice(0, 100)}...`);
+            const elements2 = await runOverpassQuery(fallbackQ, { timeoutMs: 5000, maxEndpoints: 2 });
+            console.log(`[worker] Fallback returned ${elements2.length} elements`);
+            for (const el of elements2) {
+              if (businesses.length >= parsed.target * 3) break;
+              const b = elementToBusiness(el, defaultCountry);
+              if (b) businesses.push(b);
+            }
+          } catch (e2: any) {
+            console.log(`[worker] Fallback also failed: ${e2?.message}`);
           }
         }
-        console.log(`[worker] ${businesses.length} total businesses after "${label}"`);
-      } catch (e: any) {
-        console.log(`[worker] Overpass query "${label}" failed: ${e?.message}`);
       }
     }
     if (businesses.length === 0) {
-      console.log(`[worker] No businesses found via Overpass (area=${!!area}, city=${areaName})`);
+      console.log(`[worker] No businesses found via Overpass (area=${!!area})`);
     }
   } catch (e: any) {
     console.error(`[worker] Overpass error: ${e?.message}`);

@@ -127,16 +127,16 @@ export function buildOverpassQuery(input: OverpassQueryInput): string {
     if (tag.includes("=")) {
       const [k, vRaw] = tag.split("=");
       const v = vRaw.replace(/"/g, "");
-      // Query both nodes and ways — ways are needed for businesses mapped as
-      // building footprints (common for offices, shops in malls, etc.)
-      parts.push(`node["${k}"="${v}"]${areaFilter};way["${k}"="${v}"]${areaFilter};`);
+      // Nodes only for speed — ways are slower and the Vercel 10s function limit
+      // can't accommodate both. Nodes cover the vast majority of business POIs.
+      parts.push(`node["${k}"="${v}"]${areaFilter};`);
     } else {
       // bare key presence
-      parts.push(`node["${tag}"]${areaFilter};way["${tag}"]${areaFilter};`);
+      parts.push(`node["${tag}"]${areaFilter};`);
     }
   }
   const limit = input.limit ? `\nout center ${input.limit};` : "\nout center 500;";
-  return `[out:json][timeout:15];${areaSetup}(${parts.join("")});${limit}`;
+  return `[out:json][timeout:12];${areaSetup}(${parts.join("")});${limit}`;
 }
 
 // Run the query against Overpass with failover between endpoints.
