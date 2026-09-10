@@ -58,8 +58,24 @@ const WA_RE = /(?:whats\s*app|wa\.me|api\.whatsapp)/i;
 
 let _zai: any = null;
 async function getZai() {
-  if (!_zai) _zai = await ZAI.create();
-  return _zai;
+  if (_zai) return _zai;
+  // Prefer ZAI.create() (reads .z-ai-config file — works in local dev sandbox)
+  try {
+    _zai = await ZAI.create();
+    return _zai;
+  } catch {
+    // Fallback: construct from env vars (Vercel production — no config file)
+    const baseUrl = process.env.ZAI_BASE_URL;
+    const apiKey = process.env.ZAI_API_KEY;
+    const token = process.env.ZAI_TOKEN;
+    const chatId = process.env.ZAI_CHAT_ID;
+    const userId = process.env.ZAI_USER_ID;
+    if (!baseUrl || !apiKey) {
+      throw new Error("z-ai-web-dev-sdk not configured: set ZAI_BASE_URL and ZAI_API_KEY env vars, or create .z-ai-config");
+    }
+    _zai = new ZAI({ baseUrl, apiKey, token, chatId, userId });
+    return _zai;
+  }
 }
 
 export function generateSearchQueries(business: BusinessFilters, location: LocationFilters): string[] {
