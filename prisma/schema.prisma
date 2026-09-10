@@ -1,0 +1,360 @@
+// LeadPulse — Business Lead Generator
+// Prisma schema (SQLite)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Users & Auth
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String?
+  role      String   @default("user") // user | admin
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaigns   Campaign[]
+  leads       Lead[]
+  exports     Export[]
+  auditLogs   AuditLog[]
+}
+
+// ---------------------------------------------------------------------------
+// Sources (discovery providers configuration)
+// ---------------------------------------------------------------------------
+
+model Source {
+  id            String   @id @default(cuid())
+  name          String   @unique // e.g. "OpenStreetMap Overpass"
+  type          String   // overpass | nominatim | websearch | website | directory
+  enabled       Boolean  @default(true)
+  priority      Int      @default(10) // lower = higher priority
+  apiKey        String?  // never exposed to frontend
+  endpoint      String?
+  dailyLimit    Int      @default(10000)
+  perMinute     Int      @default(60)
+  timeoutMs     Int      @default(20000)
+  retryCount    Int      @default(3)
+  requestsToday Int      @default(0)
+  lastResetAt   DateTime @default(now())
+  status        String   @default("active") // active | rate_limited | error | disabled
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  jobs       ExtractionJob[]
+  contacts   Contact[]
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns
+// ---------------------------------------------------------------------------
+
+model Campaign {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  // Location filters (stored as JSON string for SQLite)
+  locationFilters String // JSON: { country, state, city, area, postal, radiusKm, cities[] }
+
+  // Business filters
+  businessFilters String // JSON: { nature, industry, category, subcategory, keywords[], businessType, employeeMin, employeeMax, b2bB2c }
+
+  // Contact filters
+  contactFilters String // JSON: { hasEmail, hasWhatsApp, hasPhone, hasWebsite, hasSocial, hasContactPage, multipleContacts }
+
+  // Quality filters
+  qualityFilters String // JSON: { minScore, minEmailConfidence, minWhatsAppConfidence, websiteActive, businessActive }
+
+  target       Int      @default(100) // requested lead count (NOT a promise)
+  status       String   @default("draft") // draft | queued | running | paused | completed | failed | cancelled
+  progress     Int      @default(0) // 0-100
+
+  // Live stats (updated by worker)
+  businessesDiscovered Int @default(0)
+  websitesAnalyzed     Int @default(0)
+  emailsDiscovered     Int @default(0)
+  whatsappDiscovered   Int @default(0)
+  phonesDiscovered     Int @default(0)
+  duplicatesRemoved    Int @default(0)
+  invalidRemoved       Int @default(0)
+  highQualityLeads     Int @default(0)
+  validContacts        Int @default(0)
+
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  userId String?
+  user   User? @relation(fields: [userId], references: [id])
+
+  leads     Lead[]
+  jobs      ExtractionJob[]
+  exports   Export[]
+  auditLogs AuditLog[]
+}
+
+// ---------------------------------------------------------------------------
+// Businesses & Leads
+// ---------------------------------------------------------------------------
+
+model Business {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String?  // normalized domain e.g. example.com
+  website   String?
+  category  String?  // OSM amenity/shop/office tag or industry
+  subcategory String?
+  industry  String?
+  nature    String?  // nature of business
+  b2bB2c    String?  // B2B | B2C | B2B_B2C
+  businessType String? // local | online | service | retail | manufacturer | distributor | agency | startup | ecommerce
+
+  // Location
+  country    String?
+  state      String?
+  city       String?
+  area       String?
+  postalCode String?
+  address    String?
+  lat        Float?
+  lng        Float?
+
+  // Employee count (where available)
+  employeeCount Int?
+
+  // Social profiles (JSON: { facebook, instagram, linkedin, twitter, youtube, ... })
+  socialProfiles String?
+
+  // Source tracking
+  sourceId    String?
+  sourceName  String?
+  sourceUrl   String?
+  osmId       String? // OpenStreetMap element id for dedup
+  osmType     String? // node | way | relation
+
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  leads   Lead[]
+  contacts Contact[]
+
+  @@index([domain])
+  @@index([city])
+  @@index([country])
+  @@index([category])
+  @@index([osmId])
+}
+
+model Lead {
+  id        String   @id @default(cuid())
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id])
+
+  // Denormalized for fast table rendering & search
+  businessName String
+  nature       String?
+  category     String?
+  city         String?
+  country      String?
+  website      String?
+  address      String?
+
+  // Primary contact info (denormalized from contacts)
+  email          String?
+  emailConfidence Int? // 0-100
+  emailQuality   String? // high | medium | low
+  whatsapp       String? // E.164
+  whatsappConfidence Int?
+  phone          String? // E.164
+  phoneConfidence Int?
+  socialUrl      String?
+
+  leadScore   Int     @default(0) // 0-100
+  leadGrade   String? // excellent | high | good | medium | low
+  status      String  @default("new") // new | verified | favorite | rejected | edited
+  notes       String?
+
+  sourceName String?
+  sourceUrl  String?
+  discoveredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  userId String?
+  user   User? @relation(fields: [userId], references: [id])
+
+  contacts Contact[]
+
+  @@index([campaignId])
+  @@index([email])
+  @@index([phone])
+  @@index([whatsapp])
+  @@index([businessName])
+  @@index([city])
+  @@index([country])
+  @@index([category])
+  @@index([leadScore])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Contacts (evidence-backed; one business/lead may have multiple)
+// ---------------------------------------------------------------------------
+
+model Contact {
+  id        String   @id @default(cuid())
+  type      String   // email | phone | whatsapp | social | website
+  value     String   // normalized value
+  rawValue  String?  // as found on source
+  confidence Int     @default(0) // 0-100
+  quality   String?  // high | medium | low
+  verified  Boolean  @default(false)
+
+  // Evidence
+  sourceUrl   String?
+  sourceName  String?
+  evidence    String? // human-readable evidence text
+  pageSection String? // homepage | contact | about | footer | jsonld | mailto ...
+
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id])
+  leadId     String?
+  lead       Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  sourceId   String?
+  source     Source?   @relation(fields: [sourceId], references: [id])
+
+  // Validation
+  normalized    Boolean @default(false)
+  syntaxValid   Boolean @default(true)
+  domainValid   Boolean? // for emails: DNS check result
+  disposable    Boolean @default(false)
+  freeProvider  Boolean @default(false)
+  e164          String? // for phones/whatsapp
+
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([value])
+  @@index([businessId])
+  @@index([leadId])
+}
+
+// ---------------------------------------------------------------------------
+// Extraction Jobs (per-source work units within a campaign)
+// ---------------------------------------------------------------------------
+
+model ExtractionJob {
+  id         String   @id @default(cuid())
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  sourceId   String?
+  source     Source?   @relation(fields: [sourceId], references: [id])
+
+  type       String   // discover | website_analyze | email_extract | whatsapp_detect | validate | dedup | score
+  status     String   @default("queued") // queued | running | completed | failed | retry
+  priority   Int      @default(10)
+
+  input      String?  // JSON payload
+  output     String?  // JSON result
+  error      String?
+  errorCode  String?  // SOURCE_RATE_LIMITED | DOMAIN_TIMEOUT | INVALID_URL | EMAIL_PARSE_ERROR | DNS_LOOKUP_FAILED | PROVIDER_ERROR | DUPLICATE_LEAD | SOURCE_BLOCKED | WORKER_ERROR
+
+  attempts   Int      @default(0)
+  maxAttempts Int     @default(3)
+  startedAt  DateTime?
+  completedAt DateTime?
+  nextRetryAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([type])
+}
+
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
+
+model Export {
+  id         String   @id @default(cuid())
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id])
+
+  format     String   // csv | xlsx
+  scope      String   // all | campaign | filtered | selected
+  filterJson String?  // JSON of filters applied
+  leadCount  Int      @default(0)
+  fileUrl    String?  // relative path to generated file
+  status     String   @default("pending") // pending | completed | failed
+  createdAt  DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Suppression / Blocklist
+// ---------------------------------------------------------------------------
+
+model SuppressionEntry {
+  id        String   @id @default(cuid())
+  type      String   // email | phone | whatsapp | domain | business_name | website
+  value     String   // normalized value
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([type, value])
+  @@index([type])
+  @@index([value])
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id])
+
+  action    String   // campaign.create | campaign.start | lead.edit | source.update | export.create ...
+  entity    String?  // campaign | lead | source | export | suppression
+  entityId  String?
+  detail    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([campaignId])
+  @@index([action])
+}
+
+// ---------------------------------------------------------------------------
+// System Settings (configurable lead scoring, limits, etc.)
+// ---------------------------------------------------------------------------
+
+model SystemSetting {
+  key       String   @id
+  value     String   // JSON string
+  category  String   @default("general") // scoring | limits | sources | compliance
+  updatedAt DateTime @updatedAt
+}
