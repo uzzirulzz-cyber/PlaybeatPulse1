@@ -127,10 +127,12 @@ export function buildOverpassQuery(input: OverpassQueryInput): string {
     if (tag.includes("=")) {
       const [k, vRaw] = tag.split("=");
       const v = vRaw.replace(/"/g, "");
-      parts.push(`node["${k}"="${v}"]${areaFilter};way["${k}"="${v}"]${areaFilter};`);
+      // Only query nodes (not ways) for faster results — ways are slower and
+      // often duplicate the same businesses as nodes.
+      parts.push(`node["${k}"="${v}"]${areaFilter};`);
     } else {
       // bare key presence
-      parts.push(`node["${tag}"]${areaFilter};way["${tag}"]${areaFilter};`);
+      parts.push(`node["${tag}"]${areaFilter};`);
     }
   }
   const limit = input.limit ? `\nout center ${input.limit};` : "\nout center 500;";
@@ -138,11 +140,13 @@ export function buildOverpassQuery(input: OverpassQueryInput): string {
 }
 
 // Run the query against Overpass with failover between endpoints.
+// Tries at most `maxEndpoints` endpoints (default 2) within the total timeout.
 export async function runOverpassQuery(
   query: string,
-  opts: { timeoutMs?: number; signal?: AbortSignal } = {}
+  opts: { timeoutMs?: number; signal?: AbortSignal; maxEndpoints?: number } = {}
 ): Promise<any[]> {
-  const timeoutMs = opts.timeoutMs ?? 45000;
+  const timeoutMs = opts.timeoutMs ?? 8000;
+  const maxEndpoints = opts.maxEndpoints ?? 2;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -153,11 +157,10 @@ export async function runOverpassQuery(
 
   let lastError: Error | null = null;
   try {
-    for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
-      const endpoint = OVERPASS_ENDPOINTS[i];
+    const endpointsToTry = OVERPASS_ENDPOINTS.slice(0, maxEndpoints);
+    for (let i = 0; i < endpointsToTry.length; i++) {
+      const endpoint = endpointsToTry[i];
       try {
-        // Small delay between endpoints to be polite (except first)
-        if (i > 0) await new Promise(r => setTimeout(r, 500));
         const res = await fetch(endpoint, {
           method: "POST",
           headers: {
