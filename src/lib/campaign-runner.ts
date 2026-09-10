@@ -185,14 +185,20 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
       }
     }
     if (overpassQuery) {
-      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 30000 });
+      console.log(`[worker] Overpass query: ${overpassQuery.slice(0, 200)}...`);
+      const elements = await runOverpassQuery(overpassQuery, { timeoutMs: 20000 });
+      console.log(`[worker] Overpass returned ${elements.length} elements`);
       for (const el of elements) {
         if (businesses.length >= parsed.target * 3) break;
         const b = elementToBusiness(el, defaultCountry);
         if (b) businesses.push(b);
       }
+      console.log(`[worker] ${businesses.length} valid businesses after Overpass`);
+    } else {
+      console.log(`[worker] No location for Overpass query (area=${!!area}, city=${parsed.location.city})`);
     }
   } catch (e: any) {
+    console.error(`[worker] Overpass error: ${e?.message}`);
     await logJob(parsed.id, "discover", "failed", { source: "overpass" }, null, e?.message, "SOURCE_RATE_LIMITED");
   }
 
