@@ -324,8 +324,9 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
     websites: new Set(suppression.filter(s => s.type === "website").map(s => s.value.toLowerCase())),
   };
 
-  // Pre-load existing leads into dup index (for resume scenarios)
+  // Pre-load existing leads into dup index (for resume scenarios + cross-campaign dedup)
   const dupIndex = new DupIndex();
+  // Load leads from THIS campaign (for resume)
   const existing = await db.lead.findMany({
     where: { campaignId: parsed.id },
     select: { email: true, phone: true, whatsapp: true, website: true, businessName: true, city: true },
@@ -333,6 +334,24 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
   for (const l of existing) {
     dupIndex.add(buildDupKey({ email: l.email, phone: l.phone, whatsapp: l.whatsapp, website: l.website, businessName: l.businessName, city: l.city }));
   }
+  // Also load ALL leads globally (cross-campaign dedup — Rule 2: never insert duplicates)
+  // Only load leads with contact info (email/phone/whatsapp) to keep the index small
+  const globalLeads = await db.lead.findMany({
+    where: {
+      OR: [
+        { email: { not: null } },
+        { phone: { not: null } },
+        { whatsapp: { not: null } },
+        { website: { not: null } },
+      ],
+    },
+    select: { email: true, phone: true, whatsapp: true, website: true, businessName: true, city: true },
+    take: 50000, // safety cap
+  });
+  for (const l of globalLeads) {
+    dupIndex.add(buildDupKey({ email: l.email, phone: l.phone, whatsapp: l.whatsapp, website: l.website, businessName: l.businessName, city: l.city }));
+  }
+  console.log(`[worker] Dup index: ${existing.length} campaign + ${globalLeads.length} global leads loaded`);
 
   const state: CampaignState = {
     businesses, index: 0, dupIndex, suppression: sup,
