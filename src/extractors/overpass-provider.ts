@@ -58,7 +58,7 @@ export class OverpassDiscoveryProvider implements DiscoveryProvider {
         }
         if (q) {
           try {
-            const elements = await runOverpassQuery(q, { timeoutMs: 10000, maxEndpoints: 3, signal: opts.signal });
+            const elements = await runOverpassQuery(q, { timeoutMs: 15000, maxEndpoints: 3, signal: opts.signal });
             console.log(`[overpass-provider] query returned ${elements.length} elements`);
             const seenOsmIds = new Set(candidates.map(c => c.raw?.osmId));
             for (const el of elements) {
