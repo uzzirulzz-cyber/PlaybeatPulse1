@@ -5,6 +5,7 @@
 import { db } from "./db";
 import { geocodeLocation, buildOverpassQuery, runOverpassQuery, elementToBusiness, tagsForNature, allTagsForNature, type DiscoveredBusiness } from "./overpass";
 import { discoverBusinessesViaSearch } from "./websearch";
+import { discoverFromDirectories, toDiscoveredBusiness } from "./directories";
 import { analyzeWebsite } from "./website";
 import { normalizePhone } from "./phone";
 import { normalizeEmail, validateEmail, isBusinessDomain, domainFromEmail } from "./email";
@@ -230,7 +231,41 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
     await logJob(parsed.id, "discover", "failed", { source: "overpass" }, null, e?.message, "SOURCE_RATE_LIMITED");
   }
 
-  // SECONDARY: web-search discovery (z-ai SDK — only works in sandbox, not on Vercel)
+  // SECONDARY: Free directory sources (REHAB Bangladesh, Zameen Pakistan, DLD Dubai)
+  // These are public web directories with business listings — fills gaps where OSM
+  // data is sparse (e.g., real estate in Bangladesh/Pakistan/UAE).
+  if (businesses.length < parsed.target) {
+    try {
+      console.log(`[worker] Checking directory sources for ${parsed.location.country}...`);
+      const dirPromise = discoverFromDirectories(parsed.location, parsed.business, {
+        maxResults: 200,
+        signal: undefined,
+      });
+      const dirTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("directory-timeout")), 8000)
+      );
+      const dirResults = await Promise.race([dirPromise, dirTimeout]);
+      console.log(`[worker] Directory sources returned ${dirResults.length} businesses`);
+      const seenOsmIds = new Set(businesses.map(b => b.osmId));
+      const seenDomains = new Set(businesses.map(b => parseDomain(b.website)).filter(Boolean) as string[]);
+      for (const d of dirResults) {
+        if (businesses.length >= parsed.target * 3) break;
+        const dom = d.domain;
+        if (dom && seenDomains.has(dom)) continue;
+        if (dom) seenDomains.add(dom);
+        const db2 = toDiscoveredBusiness(d);
+        if (!seenOsmIds.has(db2.osmId)) {
+          seenOsmIds.add(db2.osmId);
+          businesses.push(db2);
+        }
+      }
+      console.log(`[worker] ${businesses.length} total businesses after directories`);
+    } catch (e: any) {
+      console.log(`[worker] Directory sources skipped: ${e?.message}`);
+    }
+  }
+
+  // TERTIARY: web-search discovery (z-ai SDK — only works in sandbox, not on Vercel)
   // Skip entirely if Overpass already found enough businesses, to save time.
   if (businesses.length < parsed.target && businesses.length < 10) {
     try {

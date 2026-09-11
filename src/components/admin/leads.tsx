@@ -41,12 +41,12 @@ export function LeadsSection() {
 
   // Filters
   const [search, setSearch] = React.useState('')
-  const [campaignId, setCampaignId] = React.useState(campaignIdContext ?? '')
+  const [campaignId, setCampaignId] = React.useState(campaignIdContext ?? 'all')
   const [country, setCountry] = React.useState('')
   const [city, setCity] = React.useState('')
   const [category, setCategory] = React.useState('')
   const [minScore, setMinScore] = React.useState(0)
-  const [status, setStatus] = React.useState('')
+  const [status, setStatus] = React.useState('all')
   const [page, setPage] = React.useState(1)
   const [hasEmail, setHasEmail] = React.useState(false)
   const [hasWhatsApp, setHasWhatsApp] = React.useState(false)
@@ -66,12 +66,12 @@ export function LeadsSection() {
 
   const queryParams = React.useMemo(() => ({
     search: search || undefined,
-    campaignId: campaignId || undefined,
+    campaignId: campaignId && campaignId !== 'all' ? campaignId : undefined,
     country: country || undefined,
     city: city || undefined,
     category: category || undefined,
     minScore: minScore > 0 ? minScore : undefined,
-    status: status || undefined,
+    status: status && status !== 'all' ? status : undefined,
     hasEmail: hasEmail || undefined,
     hasWhatsApp: hasWhatsApp || undefined,
     hasPhone: hasPhone || undefined,
@@ -474,7 +474,7 @@ function FiltersPanel(props: {
             <SelectValue placeholder="All campaigns" />
           </SelectTrigger>
           <SelectContent className="border-cyan-400/20 bg-[#0a1628] text-slate-100">
-            <SelectItem value="">All campaigns</SelectItem>
+            <SelectItem value="all">All campaigns</SelectItem>
             {props.campaigns?.map((c: any) => (
               <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
             ))}
@@ -529,7 +529,7 @@ function FiltersPanel(props: {
             <SelectValue placeholder="Any" />
           </SelectTrigger>
           <SelectContent className="border-cyan-400/20 bg-[#0a1628] text-slate-100">
-            <SelectItem value="">Any</SelectItem>
+            <SelectItem value="all">Any</SelectItem>
             <SelectItem value="new">New</SelectItem>
             <SelectItem value="verified">Verified</SelectItem>
             <SelectItem value="favorite">Favorite</SelectItem>

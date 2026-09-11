@@ -21,7 +21,7 @@ const PAGE_SIZE = 50
 
 export function AuditLogsSection() {
   const [page, setPage] = React.useState(1)
-  const [actionFilter, setActionFilter] = React.useState('')
+  const [actionFilter, setActionFilter] = React.useState('all')
   const [search, setSearch] = React.useState('')
 
   const { data, isLoading } = useQuery({
@@ -36,7 +36,7 @@ export function AuditLogsSection() {
   // Client-side filter (action & search)
   const filtered = React.useMemo(() => {
     let arr = allLogs
-    if (actionFilter) {
+    if (actionFilter && actionFilter !== 'all') {
       arr = arr.filter((l: any) => l.action?.includes(actionFilter))
     }
     if (search) {
@@ -85,7 +85,7 @@ export function AuditLogsSection() {
               <SelectValue placeholder="All actions" />
             </SelectTrigger>
             <SelectContent className="border-cyan-400/20 bg-[#0a1628] text-slate-100">
-              <SelectItem value="">All actions</SelectItem>
+              <SelectItem value="all">All actions</SelectItem>
               {uniqueActions.map((a) => (
                 <SelectItem key={a} value={a}>{a}</SelectItem>
               ))}
