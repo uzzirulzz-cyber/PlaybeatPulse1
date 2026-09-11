@@ -55,7 +55,8 @@ export class OverpassDiscoveryProvider implements DiscoveryProvider {
         }
         if (q) {
           try {
-            const elements = await runOverpassQuery(q, { timeoutMs: 8000, maxEndpoints: 3, signal: opts.signal });
+            const elements = await runOverpassQuery(q, { timeoutMs: 6000, maxEndpoints: 2, signal: opts.signal });
+            console.log(`[overpass-provider] query returned ${elements.length} elements`);
             const seenOsmIds = new Set(candidates.map(c => c.raw?.osmId));
             for (const el of elements) {
               if (candidates.length >= maxResults) break;
@@ -76,7 +77,7 @@ export class OverpassDiscoveryProvider implements DiscoveryProvider {
               }
             }
           } catch (e: any) {
-            // non-fatal — return what we have
+            console.log(`[overpass-provider] query failed: ${e?.message}`);
           }
         }
       }
