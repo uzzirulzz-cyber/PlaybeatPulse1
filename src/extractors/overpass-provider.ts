@@ -19,43 +19,46 @@ export class OverpassDiscoveryProvider implements DiscoveryProvider {
     const candidates: DiscoveredCandidate[] = [];
 
     try {
-      // Geocode location (3s timeout — don't let it eat the tick budget)
+      // Skip geocoding — use area-name query directly (faster, fits in 10s budget)
+      // Only geocode if area-name isn't available
+      const areaName = location.city || location.area || location.state;
       let area: any = null;
-      try {
-        const geoPromise = geocodeLocation(location);
-        const timeoutPromise = new Promise<null>((r) => setTimeout(() => r(null), 3000));
-        area = await Promise.race([geoPromise, timeoutPromise]);
-      } catch { /* non-fatal */ }
+      let queryBbox: [number, number, number, number] | null = null;
+
+      if (!areaName) {
+        // No city name — must geocode to get bbox
+        try {
+          const geoPromise = geocodeLocation(location);
+          const timeoutPromise = new Promise<null>((r) => setTimeout(() => r(null), 3000));
+          area = await Promise.race([geoPromise, timeoutPromise]);
+          if (area) {
+            const [s, n, w, e] = area.boundingBox;
+            const maxSpan = 0.3;
+            const cLat = (s + n) / 2;
+            const cLon = (w + e) / 2;
+            const halfLat = Math.min((n - s) / 2, maxSpan / 2);
+            const halfLon = Math.min((e - w) / 2, maxSpan / 2);
+            queryBbox = [cLat - halfLat, cLon - halfLon, cLat + halfLat, cLon + halfLon];
+          }
+        } catch { /* non-fatal */ }
+      }
 
       const nature = business.nature || business.industry || business.category || "";
       const { tags, specific } = tagsForNature(nature);
       const fullTags = specific ? allTagsForNature(nature) : tags;
 
-      // Shrink bbox for large cities
-      let queryBbox: [number, number, number, number] | null = null;
-      if (area) {
-        const [s, n, w, e] = area.boundingBox;
-        const maxSpan = 0.3;
-        const cLat = (s + n) / 2;
-        const cLon = (w + e) / 2;
-        const halfLat = Math.min((n - s) / 2, maxSpan / 2);
-        const halfLon = Math.min((e - w) / 2, maxSpan / 2);
-        queryBbox = [cLat - halfLat, cLon - halfLon, cLat + halfLat, cLon + halfLon];
-      }
-
-      // Try only the FIRST (most specific) tag — keeps within 8s timeout
+      // Try only the FIRST (most specific) tag — keeps within timeout
       const tag = fullTags[0];
       if (tag) {
         let q = "";
         if (queryBbox) {
           q = buildOverpassQuery({ bbox: queryBbox, tags: [tag], limit: Math.min(300, maxResults * 2) });
-        } else {
-          const areaName = location.city || location.area || location.state;
-          if (areaName) q = buildOverpassQuery({ areaName, tags: [tag], limit: Math.min(300, maxResults * 2) });
+        } else if (areaName) {
+          q = buildOverpassQuery({ areaName, tags: [tag], limit: Math.min(300, maxResults * 2) });
         }
         if (q) {
           try {
-            const elements = await runOverpassQuery(q, { timeoutMs: 6000, maxEndpoints: 2, signal: opts.signal });
+            const elements = await runOverpassQuery(q, { timeoutMs: 10000, maxEndpoints: 3, signal: opts.signal });
             console.log(`[overpass-provider] query returned ${elements.length} elements`);
             const seenOsmIds = new Set(candidates.map(c => c.raw?.osmId));
             for (const el of elements) {
