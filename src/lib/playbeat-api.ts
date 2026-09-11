@@ -144,18 +144,47 @@ export const pbApi = {
     api<AuditLogsResponse>(`/api/audit-logs?page=${page}&pageSize=50`),
   rules: () => api<any[]>("/api/rules"),
   exports: () => api<any[]>("/api/exports"),
-  exportLeads: (data: {
+  exportLeads: async (data: {
     format: "csv" | "xlsx" | "json";
     scope: "all" | "filtered" | "campaign" | "selected";
     campaignId?: string;
     filters?: any;
     ids?: string[];
-  }) => api<{ id: string; fileUrl: string; leadCount: number }>("/api/leads/export", {
-    method: "POST",
-    body: JSON.stringify(data),
-  }),
+  }): Promise<{ id: string; fileUrl: string; leadCount: number }> => {
+    // Call /api/exports which returns the file as a downloadable blob
+    const res = await fetch("/api/exports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(data),
+    });
+    if (res.status === 401) throw new UnauthorizedError();
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    // The response is a file download (blob) — extract metadata from headers
+    const exportId = res.headers.get("X-Export-Id") || `exp_${Date.now()}`;
+    const leadCount = parseInt(res.headers.get("X-Export-Count") || "0", 10);
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const filenameMatch = disposition.match(/filename="?(.+?)"?$/);
+    const filename = filenameMatch ? filenameMatch[1] : `playbeat-leads.${data.format}`;
+
+    // Create a blob URL and trigger download
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    return { id: exportId, fileUrl: filename, leadCount };
+  },
   workerTick: (campaignId: string) =>
-    api<WorkerTickResult>(`/api/worker/tick?campaignId=${campaignId}&budget=8000`, {
+    api<WorkerTickResult>(`/api/worker/tick?campaignId=${campaignId}&budget=30000`, {
       method: "POST",
     }),
   retryJob: (id: string) =>

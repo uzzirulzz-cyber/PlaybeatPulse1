@@ -170,21 +170,48 @@ export async function POST(req: NextRequest) {
     });
 
     const leadCount = rows.length;
-    const ext = body.format;
+    const ext = body.format === "json" ? "json" : body.format;
     const fileName = `${exportRec.id}.${ext}`;
-    const dir = path.join(process.cwd(), "public", "exports");
-    fs.mkdirSync(dir, { recursive: true });
-    const absPath = path.join(dir, fileName);
 
-    if (body.format === "csv") {
-      const csv = buildCsv(rows);
-      fs.writeFileSync(absPath, csv, "utf8");
+    // Build the file content in memory (Vercel filesystem is read-only)
+    let fileBuffer: Buffer;
+    let contentType: string;
+
+    if (body.format === "json") {
+      contentType = "application/json";
+      fileBuffer = Buffer.from(JSON.stringify(rows.map(r => ({
+        businessName: r.businessName,
+        category: r.category,
+        city: r.city,
+        country: r.country,
+        website: r.website,
+        email: r.email,
+        emailConfidence: r.emailConfidence,
+        whatsapp: r.whatsapp,
+        whatsappConfidence: r.whatsappConfidence,
+        phone: r.phone,
+        address: r.address,
+        leadScore: r.leadScore,
+        leadGrade: r.leadGrade,
+        sourceName: r.sourceName,
+        sourceUrl: r.sourceUrl,
+        discoveredAt: r.discoveredAt,
+      })), null, 2));
+    } else if (body.format === "csv") {
+      contentType = "text/csv";
+      fileBuffer = Buffer.from(buildCsv(rows));
     } else {
-      const buf = buildXlsxBuffer(rows);
-      fs.writeFileSync(absPath, buf);
+      contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      fileBuffer = buildXlsxBuffer(rows);
     }
 
-    const fileUrl = `/exports/${fileName}`;
+    // Write to /tmp (works on Vercel)
+    const tmpDir = "/tmp/exports";
+    try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+    const tmpPath = path.join(tmpDir, fileName);
+    fs.writeFileSync(tmpPath, fileBuffer);
+
+    const fileUrl = `/api/exports/${exportRec.id}/download`;
     const updated = await db.export.update({
       where: { id: exportRec.id },
       data: {
@@ -202,10 +229,17 @@ export async function POST(req: NextRequest) {
       `Exported ${leadCount} leads as ${ext.toUpperCase()} (scope=${body.scope})`
     );
 
-    return NextResponse.json({
-      id: updated.id,
-      fileUrl,
-      leadCount,
+    // Return the file as a downloadable blob (works on Vercel read-only filesystem)
+    const downloadFilename = `playbeat-leads-${exportRec.id}.${ext}`;
+    return new NextResponse(fileBuffer as any, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${downloadFilename}"`,
+        "Content-Length": fileBuffer.length.toString(),
+        "X-Export-Id": exportRec.id,
+        "X-Export-Count": leadCount.toString(),
+      },
     });
   } catch (err: any) {
     console.error("[leads.export] error", err);

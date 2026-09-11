@@ -122,7 +122,7 @@ export function LeadsSection() {
   const exportMutation = useMutation({
     mutationFn: (data: { format: 'csv' | 'xlsx' | 'json'; scope: 'all' | 'filtered' }) =>
       pbApi.exportLeads({
-        format: data.format === 'json' ? 'csv' : data.format, // backend supports csv/xlsx
+        format: data.format, // backend supports csv/xlsx/json
         scope: data.scope,
         filters: data.scope === 'filtered' ? {
           search, campaignId, country, city, category, minScore,
@@ -131,10 +131,10 @@ export function LeadsSection() {
       }),
     onSuccess: (result) => {
       toast({
-        title: 'Export ready',
-        description: `${result.leadCount} leads exported`,
+        title: 'Export downloaded',
+        description: `${result.leadCount} leads exported to ${result.fileUrl}`,
       })
-      window.open(result.fileUrl, '_blank')
+      // File download is already triggered by exportLeads (blob download)
       qc.invalidateQueries({ queryKey: ['pb-exports'] })
       setExportOpen(false)
     },
