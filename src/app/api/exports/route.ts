@@ -93,18 +93,22 @@ export async function POST(req: NextRequest) {
     }
 
     // Generate the export file
+    // On Vercel, the filesystem is read-only except /tmp. We write to /tmp and
+    // return the file content directly as a download response.
     const exportId = `exp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const fs = await import("fs/promises");
     const path = await import("path");
-    const exportDir = path.join(process.cwd(), "public", "exports");
-    await fs.mkdir(exportDir, { recursive: true });
+    const tmpDir = "/tmp/exports";
+    await fs.mkdir(tmpDir, { recursive: true }).catch(() => {});
 
-    let fileUrl: string;
-    let fileContent: string | Buffer;
+    let fileBuffer: Buffer;
+    let contentType: string;
+    let fileExt: string;
 
     if (format === "json") {
-      fileUrl = `/exports/${exportId}.json`;
-      fileContent = JSON.stringify(leads.map(l => ({
+      fileExt = "json";
+      contentType = "application/json";
+      fileBuffer = Buffer.from(JSON.stringify(leads.map(l => ({
         businessName: l.businessName,
         category: l.category,
         city: l.city,
@@ -121,10 +125,10 @@ export async function POST(req: NextRequest) {
         sourceName: l.sourceName,
         sourceUrl: l.sourceUrl,
         discoveredAt: l.discoveredAt,
-      })), null, 2);
-      await fs.writeFile(path.join(exportDir, `${exportId}.json`), fileContent);
+      })), null, 2));
     } else if (format === "csv") {
-      fileUrl = `/exports/${exportId}.csv`;
+      fileExt = "csv";
+      contentType = "text/csv";
       const headers = ["Business Name", "Industry", "Category", "City", "Country", "Website", "Email", "Email Confidence", "WhatsApp", "WhatsApp Confidence", "Phone", "Address", "Social URL", "Lead Score", "Source", "Source URL", "Discovered At"];
       const rows = [headers.join(",")];
       for (const l of leads) {
@@ -149,11 +153,11 @@ export async function POST(req: NextRequest) {
         ];
         rows.push(row.join(","));
       }
-      fileContent = rows.join("\n");
-      await fs.writeFile(path.join(exportDir, `${exportId}.csv`), fileContent);
+      fileBuffer = Buffer.from(rows.join("\n"));
     } else {
       // xlsx
-      fileUrl = `/exports/${exportId}.xlsx`;
+      fileExt = "xlsx";
+      contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
       const XLSX = await import("xlsx");
       const data = leads.map(l => ({
         "Business Name": l.businessName,
@@ -177,12 +181,16 @@ export async function POST(req: NextRequest) {
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Leads");
-      const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-      await fs.writeFile(path.join(exportDir, `${exportId}.xlsx`), buf);
+      fileBuffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
     }
 
-    // Create Export record
-    const exportRow = await db.export.create({
+    // Write to /tmp (works on Vercel)
+    const tmpPath = path.join(tmpDir, `${exportId}.${fileExt}`);
+    await fs.writeFile(tmpPath, fileBuffer);
+
+    // Create Export record (fileUrl is a download endpoint, not a static file)
+    const fileUrl = `/api/exports/${exportId}/download`;
+    await db.export.create({
       data: {
         id: exportId,
         campaignId: scope === "campaign" ? campaignId : null,
@@ -204,12 +212,17 @@ export async function POST(req: NextRequest) {
       ip: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown",
     });
 
-    return NextResponse.json({
-      id: exportId,
-      fileUrl,
-      leadCount: leads.length,
-      format,
-      scope,
+    // Return the file as a downloadable response
+    const filename = `playbeat-leads-${exportId}.${fileExt}`;
+    return new NextResponse(fileBuffer as any, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Length": fileBuffer.length.toString(),
+        "X-Export-Id": exportId,
+        "X-Export-Count": leads.length.toString(),
+      },
     });
   } catch (err: any) {
     console.error("[exports.create] error", err);
