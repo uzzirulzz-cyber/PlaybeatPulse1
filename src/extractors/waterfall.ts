@@ -23,6 +23,7 @@ import { WebSearchDiscoveryProvider } from "./websearch-provider";
 import { DirectoryDiscoveryProvider } from "./directory-provider";
 import { OpenCorporatesProvider } from "./opencorporates-provider";
 import { FoursquareProvider } from "./foursquare-provider";
+import { DomainsdbProvider, USAspendingProvider, PickAnAgencyProvider, TradeDataHubProvider } from "./free-discovery-providers";
 import { getEnrichmentProviders, type EnrichmentProvider } from "./enrichment-providers";
 import { parseDomain } from "../lib/ssrf";
 import type { LocationFilters, BusinessFilters } from "../lib/types";
@@ -37,11 +38,15 @@ export interface WaterfallResult {
 // Build the discovery provider waterfall in priority order
 export function buildDiscoveryWaterfall(): DiscoveryProvider[] {
   return [
-    new OpenCorporatesProvider(),    // Layer 1a: company registry (free, 200M+ companies)
-    new FoursquareProvider(),         // Layer 1b: places (free tier, if API key set)
-    new OverpassDiscoveryProvider(),  // Layer 1c: OpenStreetMap (free, always works)
-    new DirectoryDiscoveryProvider(), // Layer 1d: REHAB/Zameen/DLD (free, regional)
-    new WebSearchDiscoveryProvider(), // Layer 1e: web search (free, sandbox only)
+    new OpenCorporatesProvider(),    // company registry (free, 200M+ companies)
+    new FoursquareProvider(),         // places (free tier, if API key set)
+    new OverpassDiscoveryProvider(),  // OpenStreetMap (free, always works)
+    new DomainsdbProvider(),          // domain search (free, no auth)
+    new USAspendingProvider(),        // US federal contracts (free, no auth)
+    new PickAnAgencyProvider(),       // marketing agencies (free, no auth)
+    new TradeDataHubProvider(),       // US contractors (free, no auth)
+    new DirectoryDiscoveryProvider(), // REHAB/Zameen/DLD (free)
+    new WebSearchDiscoveryProvider(), // web search (free, sandbox only)
   ];
 }
 
