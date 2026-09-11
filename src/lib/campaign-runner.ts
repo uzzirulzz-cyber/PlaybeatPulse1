@@ -6,7 +6,7 @@ import { db } from "./db";
 import { geocodeLocation, buildOverpassQuery, runOverpassQuery, elementToBusiness, tagsForNature, allTagsForNature, type DiscoveredBusiness } from "./overpass";
 import { discoverBusinessesViaSearch } from "./websearch";
 import { discoverFromDirectories, toDiscoveredBusiness } from "./directories";
-import { runDiscoveryWaterfall, runEnrichmentBatch } from "../extractors/waterfall";
+import { runDiscoveryWaterfall, runEnrichmentBatch, buildDiscoveryWaterfall } from "../extractors/waterfall";
 import { analyzeWebsite } from "./website";
 import { normalizePhone } from "./phone";
 import { normalizeEmail, validateEmail, isBusinessDomain, domainFromEmail } from "./email";
@@ -32,6 +32,9 @@ interface CampaignState {
   natureLabel: string;
   maxWebsites: number;
   websitesAnalyzed: number;
+  // Waterfall state — tracks which discovery provider to try next
+  waterfallProviderIndex: number;
+  waterfallDone: boolean;
 }
 const stateCache = new Map<string, CampaignState>();
 
@@ -175,91 +178,99 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
   const businesses: DiscoveredBusiness[] = [];
 
   // ============================================================================
-  // WATERFALL DISCOVERY (Layer 1) — multi-source, tries providers in priority:
-  //   OpenCorporates → Foursquare → OpenStreetMap → Directories → Web Search
-  // Each source fills gaps left by the previous. Continues until target reached
-  // or all sources exhausted.
+  // WATERFALL DISCOVERY (Layer 1) — stateful, ONE provider per tick.
+  // Tries providers in priority: OpenCorporates → Foursquare → OSM → Directories → Web Search
+  // Each tick tries the next untried provider. Results accumulate across ticks.
+  // This fits within the Vercel 10s function timeout.
   // ============================================================================
-  try {
-    console.log(`[worker] Starting waterfall discovery (target: ${parsed.target})...`);
-    const waterfallResult = await runDiscoveryWaterfall(parsed.location, parsed.business, {
-      target: parsed.target,
-      signal: undefined,
-    });
+  const providerFactories = buildDiscoveryWaterfall();
+  let waterfallProviderIndex = 0;
+  let waterfallDone = false;
 
-    // Log source performance
-    for (const s of waterfallResult.sourcesTried) {
-      console.log(`[waterfall] ${s.name}: ${s.found} found ${s.error ? "(" + s.error + ")" : ""}`);
-    }
-    console.log(`[waterfall] Total: ${waterfallResult.totalFound} businesses from ${waterfallResult.sourcesTried.length} sources`);
+  // Try ONE provider this tick (the first untried one)
+  if (waterfallProviderIndex < providerFactories.length) {
+    const provider = providerFactories[waterfallProviderIndex];
+    waterfallProviderIndex++;
 
-    // Convert waterfall candidates to DiscoveredBusiness format
-    const seenOsmIds = new Set<string>();
-    for (const c of waterfallResult.candidates) {
-      if (businesses.length >= parsed.target * 3) break;
-      const osmId = c.raw?.osmId || `wf/${c.domain}`;
-      if (seenOsmIds.has(osmId)) continue;
-      seenOsmIds.add(osmId);
+    if (!provider.enabled) {
+      console.log(`[waterfall] skipping ${provider.name} (disabled)`);
+    } else {
+      try {
+        console.log(`[waterfall] trying ${provider.name}...`);
+        const result = await provider.discover(parsed.location, parsed.business, {
+          maxResults: Math.min(300, parsed.target * 2),
+          signal: undefined,
+        });
+        console.log(`[waterfall] ${provider.name}: ${result.candidates.length} found ${result.error ? "(" + result.error + ")" : ""}`);
 
-      businesses.push({
-        osmId,
-        osmType: (c.raw?.osmType as any) || "node",
-        name: c.name,
-        category: c.category || parsed.business.nature || "business",
-        subcategory: c.subcategory || parsed.business.industry || natureLabel,
-        website: c.website,
-        phone: c.phone,
-        email: c.email,
-        whatsapp: c.whatsapp,
-        address: c.address,
-        city: c.city,
-        state: c.state,
-        country: c.country || defaultCountry,
-        postalCode: c.postalCode,
-        lat: c.lat,
-        lng: c.lng,
-        socialProfiles: c.socialProfiles,
-        sourceName: c.sourceName,
-        sourceUrl: c.sourceUrl,
-        raw: c.raw || {},
-      });
-    }
-
-    // Layer 2: Enrichment (Hunter/Apollo/Snov — only if API keys configured)
-    if (businesses.length > 0) {
-      const businessesWithoutEmail = businesses.filter(b => !b.email);
-      if (businessesWithoutEmail.length > 0) {
-        console.log(`[worker] Layer 2: Enriching ${businessesWithoutEmail.length} businesses without email...`);
-        const candidatesForEnrichment = businessesWithoutEmail.map(b => ({
-          name: b.name,
-          website: b.website,
-          domain: b.website ? parseDomain(b.website) || b.sourceUrl : b.sourceUrl,
-          sourceName: b.sourceName,
-          sourceUrl: b.sourceUrl,
-          sourceType: "api",
-        }));
-        const enrichResult = await runEnrichmentBatch(candidatesForEnrichment, { maxEnrich: 30 });
-        if (enrichResult.enriched > 0) {
-          console.log(`[worker] Enrichment added ${enrichResult.enriched} emails`);
-          // Merge enriched emails back into businesses
-          for (const b of businesses) {
-            if (b.email) continue;
-            const dom = b.website ? parseDomain(b.website) : null;
-            if (dom && enrichResult.results.has(dom)) {
-              const r = enrichResult.results.get(dom)!;
-              if (r.email) {
-                b.email = r.email;
-                // Store enrichment source in raw
-                b.raw = { ...b.raw, enrichmentSource: r.source, enrichmentVerified: r.verified };
-              }
-            }
-          }
+        const seenOsmIds = new Set<string>();
+        for (const c of result.candidates) {
+          if (businesses.length >= parsed.target * 3) break;
+          const osmId = c.raw?.osmId || `wf/${c.domain}`;
+          if (seenOsmIds.has(osmId)) continue;
+          seenOsmIds.add(osmId);
+          businesses.push({
+            osmId,
+            osmType: (c.raw?.osmType as any) || "node",
+            name: c.name,
+            category: c.category || parsed.business.nature || "business",
+            subcategory: c.subcategory || parsed.business.industry || natureLabel,
+            website: c.website,
+            phone: c.phone,
+            email: c.email,
+            whatsapp: c.whatsapp,
+            address: c.address,
+            city: c.city,
+            state: c.state,
+            country: c.country || defaultCountry,
+            postalCode: c.postalCode,
+            lat: c.lat,
+            lng: c.lng,
+            socialProfiles: c.socialProfiles,
+            sourceName: c.sourceName,
+            sourceUrl: c.sourceUrl,
+            raw: c.raw || {},
+          });
         }
+      } catch (e: any) {
+        console.log(`[waterfall] ${provider.name} failed: ${e?.message}`);
       }
     }
-  } catch (e: any) {
-    console.error(`[worker] Waterfall discovery error: ${e?.message}`);
-    await logJob(parsed.id, "discover", "failed", { source: "waterfall" }, null, e?.message, "PROVIDER_ERROR");
+
+    // If we've tried all providers, mark waterfall as done
+    if (waterfallProviderIndex >= providerFactories.length) {
+      waterfallDone = true;
+    }
+  } else {
+    waterfallDone = true;
+  }
+
+  console.log(`[waterfall] businesses so far: ${businesses.length} (provider ${waterfallProviderIndex}/${providerFactories.length}, done=${waterfallDone})`);
+
+  // If waterfall isn't done and we have 0 businesses, don't fail yet — try next provider on next tick
+  if (businesses.length === 0 && !waterfallDone) {
+    console.log(`[waterfall] no businesses yet, but more providers to try — will continue next tick`);
+    // Update campaign with discovery progress
+    await db.campaign.update({
+      where: { id: parsed.id },
+      data: { businessesDiscovered: 0, status: "running", startedAt: new Date(), errorMessage: null },
+    });
+    // Return a partial state so the next tick continues discovery
+    const state: CampaignState = {
+      businesses: [],
+      index: 0,
+      dupIndex: new DupIndex(),
+      suppression: { emails: new Set(), phones: new Set(), whatsapp: new Set(), domains: new Set(), names: new Set(), websites: new Set() },
+      defaultCountry,
+      specific,
+      natureLabel,
+      maxWebsites: Math.min(limits.maxWebsitesPerCampaign, Math.max(50, parsed.target)),
+      websitesAnalyzed: 0,
+      waterfallProviderIndex,
+      waterfallDone: false,
+    };
+    stateCache.set(parsed.id, state);
+    return state;
   }
 
   if (businesses.length === 0) {
@@ -312,6 +323,8 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
     defaultCountry, specific, natureLabel,
     maxWebsites: Math.min(limits.maxWebsitesPerCampaign, Math.max(50, parsed.target)),
     websitesAnalyzed: 0,
+    waterfallProviderIndex,
+    waterfallDone,
   };
   stateCache.set(parsed.id, state);
 
@@ -569,6 +582,98 @@ export async function processCampaignBatch(campaignId: string, timeBudgetMs = 15
       message: `Discovered ${state.businesses.length} businesses. Starting extraction…`,
       done: false,
     };
+  }
+
+  // Waterfall continuation: if state exists but waterfall isn't done, try next provider
+  if (state && !state.waterfallDone && state.businesses.length === 0) {
+    console.log(`[waterfall] continuing discovery — trying next provider (index ${state.waterfallProviderIndex})...`);
+    const providers = buildDiscoveryWaterfall();
+    if (state.waterfallProviderIndex < providers.length) {
+      const provider = providers[state.waterfallProviderIndex];
+      state.waterfallProviderIndex++;
+      if (state.waterfallProviderIndex >= providers.length) {
+        state.waterfallDone = true;
+      }
+
+      if (provider.enabled) {
+        try {
+          console.log(`[waterfall] trying ${provider.name}...`);
+          const result = await provider.discover(parsed.location, parsed.business, {
+            maxResults: Math.min(300, parsed.target * 2),
+          });
+          console.log(`[waterfall] ${provider.name}: ${result.candidates.length} found`);
+
+          for (const c of result.candidates) {
+            if (state.businesses.length >= parsed.target * 3) break;
+            const osmId = c.raw?.osmId || `wf/${c.domain}`;
+            state.businesses.push({
+              osmId,
+              osmType: (c.raw?.osmType as any) || "node",
+              name: c.name,
+              category: c.category || parsed.business.nature || "business",
+              subcategory: c.subcategory || parsed.business.industry || state.natureLabel,
+              website: c.website,
+              phone: c.phone,
+              email: c.email,
+              whatsapp: c.whatsapp,
+              address: c.address,
+              city: c.city,
+              state: c.state,
+              country: c.country || state.defaultCountry,
+              postalCode: c.postalCode,
+              lat: c.lat,
+              lng: c.lng,
+              socialProfiles: c.socialProfiles,
+              sourceName: c.sourceName,
+              sourceUrl: c.sourceUrl,
+              raw: c.raw || {},
+            });
+          }
+
+          // If we found businesses, load suppression + dup index for processing
+          if (state.businesses.length > 0) {
+            const suppression = await db.suppressionEntry.findMany();
+            state.suppression = {
+              emails: new Set(suppression.filter(s => s.type === "email").map(s => s.value.toLowerCase())),
+              phones: new Set(suppression.filter(s => s.type === "phone" || s.type === "whatsapp").map(s => s.value)),
+              whatsapp: new Set(suppression.filter(s => s.type === "whatsapp").map(s => s.value)),
+              domains: new Set(suppression.filter(s => s.type === "domain").map(s => s.value.toLowerCase())),
+              names: new Set(suppression.filter(s => s.type === "business_name").map(s => s.value.toLowerCase())),
+              websites: new Set(suppression.filter(s => s.type === "website").map(s => s.value.toLowerCase())),
+            };
+            // Load global dup index
+            const globalLeads = await db.lead.findMany({
+              where: { OR: [{ email: { not: null } }, { phone: { not: null } }, { whatsapp: { not: null } }, { website: { not: null } }] },
+              select: { email: true, phone: true, whatsapp: true, website: true, businessName: true, city: true },
+              take: 50000,
+            });
+            for (const l of globalLeads) {
+              state.dupIndex.add(buildDupKey({ email: l.email, phone: l.phone, whatsapp: l.whatsapp, website: l.website, businessName: l.businessName, city: l.city }));
+            }
+            await db.campaign.update({ where: { id: campaignId }, data: { businessesDiscovered: state.businesses.length } });
+          }
+        } catch (e: any) {
+          console.log(`[waterfall] ${provider.name} failed: ${e?.message}`);
+        }
+      } else {
+        console.log(`[waterfall] skipping ${provider.name} (disabled)`);
+      }
+
+      // Return progress (don't process businesses this tick)
+      const freshStats = readStats(await db.campaign.findUnique({ where: { id: campaignId } }) || campaign);
+      return {
+        campaignId, status: "running", progress: 0,
+        stats: freshStats, target: parsed.target,
+        message: state.waterfallDone
+          ? `Discovery complete: ${state.businesses.length} businesses. Starting extraction…`
+          : `Discovering via waterfall (provider ${state.waterfallProviderIndex})…`,
+        done: false,
+      };
+    } else {
+      state.waterfallDone = true;
+      await failCampaign(campaignId, "No public businesses were found from the configured sources for the given filters. Try broadening the location or nature of business.");
+      return { campaignId, status: "failed", progress: 0, stats: readStats(campaign), target: parsed.target, message: "Discovery failed", done: true };
+    }
   }
 
   const scoring = await getScoringConfig();
