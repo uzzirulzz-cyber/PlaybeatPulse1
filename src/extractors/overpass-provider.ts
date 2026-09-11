@@ -19,7 +19,7 @@ export class OverpassDiscoveryProvider implements DiscoveryProvider {
     const candidates: DiscoveredCandidate[] = [];
 
     try {
-      // Geocode location (3s timeout)
+      // Geocode location (3s timeout — don't let it eat the tick budget)
       let area: any = null;
       try {
         const geoPromise = geocodeLocation(location);
@@ -43,9 +43,9 @@ export class OverpassDiscoveryProvider implements DiscoveryProvider {
         queryBbox = [cLat - halfLat, cLon - halfLon, cLat + halfLat, cLon + halfLon];
       }
 
-      // Try each tag individually
-      for (const tag of fullTags.slice(0, 3)) {
-        if (candidates.length >= maxResults) break;
+      // Try only the FIRST (most specific) tag — keeps within 8s timeout
+      const tag = fullTags[0];
+      if (tag) {
         let q = "";
         if (queryBbox) {
           q = buildOverpassQuery({ bbox: queryBbox, tags: [tag], limit: Math.min(300, maxResults * 2) });
@@ -53,41 +53,31 @@ export class OverpassDiscoveryProvider implements DiscoveryProvider {
           const areaName = location.city || location.area || location.state;
           if (areaName) q = buildOverpassQuery({ areaName, tags: [tag], limit: Math.min(300, maxResults * 2) });
         }
-        if (!q) continue;
-        try {
-          const elements = await runOverpassQuery(q, { timeoutMs: 15000, maxEndpoints: 3, signal: opts.signal });
-          const seenOsmIds = new Set(candidates.map(c => c.raw?.osmId));
-          for (const el of elements) {
-            if (candidates.length >= maxResults) break;
-            const b = elementToBusiness(el, area?.country || location.country);
-            if (b && !seenOsmIds.has(b.osmId)) {
-              seenOsmIds.add(b.osmId);
-              candidates.push({
-                name: b.name,
-                website: b.website,
-                domain: b.website ? parseDomain(b.website) || b.sourceUrl : b.sourceUrl,
-                email: b.email,
-                phone: b.phone,
-                whatsapp: b.whatsapp,
-                address: b.address,
-                city: b.city,
-                state: b.state,
-                country: b.country,
-                postalCode: b.postalCode,
-                lat: b.lat,
-                lng: b.lng,
-                category: b.category,
-                subcategory: b.subcategory,
-                socialProfiles: b.socialProfiles,
-                sourceName: b.sourceName,
-                sourceUrl: b.sourceUrl,
-                sourceType: "overpass",
-                raw: { osmId: b.osmId, osmType: b.osmType },
-              });
+        if (q) {
+          try {
+            const elements = await runOverpassQuery(q, { timeoutMs: 8000, maxEndpoints: 3, signal: opts.signal });
+            const seenOsmIds = new Set(candidates.map(c => c.raw?.osmId));
+            for (const el of elements) {
+              if (candidates.length >= maxResults) break;
+              const b = elementToBusiness(el, area?.country || location.country);
+              if (b && !seenOsmIds.has(b.osmId)) {
+                seenOsmIds.add(b.osmId);
+                candidates.push({
+                  name: b.name, website: b.website,
+                  domain: b.website ? parseDomain(b.website) || b.sourceUrl : b.sourceUrl,
+                  email: b.email, phone: b.phone, whatsapp: b.whatsapp,
+                  address: b.address, city: b.city, state: b.state, country: b.country,
+                  postalCode: b.postalCode, lat: b.lat, lng: b.lng,
+                  category: b.category, subcategory: b.subcategory,
+                  socialProfiles: b.socialProfiles,
+                  sourceName: b.sourceName, sourceUrl: b.sourceUrl, sourceType: "overpass",
+                  raw: { osmId: b.osmId, osmType: b.osmType },
+                });
+              }
             }
+          } catch (e: any) {
+            // non-fatal — return what we have
           }
-        } catch (e: any) {
-          // continue to next tag
         }
       }
     } catch (e: any) {
