@@ -6,6 +6,7 @@ import { db } from "./db";
 import { geocodeLocation, buildOverpassQuery, runOverpassQuery, elementToBusiness, tagsForNature, allTagsForNature, type DiscoveredBusiness } from "./overpass";
 import { discoverBusinessesViaSearch } from "./websearch";
 import { discoverFromDirectories, toDiscoveredBusiness } from "./directories";
+import { runDiscoveryWaterfall, runEnrichmentBatch } from "../src/extractors/waterfall";
 import { analyzeWebsite } from "./website";
 import { normalizePhone } from "./phone";
 import { normalizeEmail, validateEmail, isBusinessDomain, domainFromEmail } from "./email";
@@ -173,139 +174,92 @@ async function initCampaign(parsed: ParsedCampaign): Promise<CampaignState | nul
 
   const businesses: DiscoveredBusiness[] = [];
 
-  // PRIMARY: Overpass (OpenStreetMap) — public API, works from Vercel + sandbox
-  // Use bbox from Nominatim geocoding. SINGLE tag per query for speed (6s budget).
+  // ============================================================================
+  // WATERFALL DISCOVERY (Layer 1) — multi-source, tries providers in priority:
+  //   OpenCorporates → Foursquare → OpenStreetMap → Directories → Web Search
+  // Each source fills gaps left by the previous. Continues until target reached
+  // or all sources exhausted.
+  // ============================================================================
   try {
-    const queryLimit = Math.min(300, parsed.target * 3);
-    const fullTags = specific
-      ? allTagsForNature(parsed.business.nature || parsed.business.industry || parsed.business.category)
-      : tags;
+    console.log(`[worker] Starting waterfall discovery (target: ${parsed.target})...`);
+    const waterfallResult = await runDiscoveryWaterfall(parsed.location, parsed.business, {
+      target: parsed.target,
+      signal: undefined,
+    });
 
-    // Shrink bbox for large cities. Cap at ~0.3°×0.3° (~33km) for faster queries.
-    let queryBbox: [number, number, number, number] | null = null;
-    if (area) {
-      const [s, n, w, e] = area.boundingBox;
-      const maxSpan = 0.3;
-      const cLat = (s + n) / 2;
-      const cLon = (w + e) / 2;
-      const halfLat = Math.min((n - s) / 2, maxSpan / 2);
-      const halfLon = Math.min((e - w) / 2, maxSpan / 2);
-      queryBbox = [cLat - halfLat, cLon - halfLon, cLat + halfLat, cLon + halfLon];
+    // Log source performance
+    for (const s of waterfallResult.sourcesTried) {
+      console.log(`[waterfall] ${s.name}: ${s.found} found ${s.error ? "(" + s.error + ")" : ""}`);
+    }
+    console.log(`[waterfall] Total: ${waterfallResult.totalFound} businesses from ${waterfallResult.sourcesTried.length} sources`);
+
+    // Convert waterfall candidates to DiscoveredBusiness format
+    const seenOsmIds = new Set<string>();
+    for (const c of waterfallResult.candidates) {
+      if (businesses.length >= parsed.target * 3) break;
+      const osmId = c.raw?.osmId || `wf/${c.domain}`;
+      if (seenOsmIds.has(osmId)) continue;
+      seenOsmIds.add(osmId);
+
+      businesses.push({
+        osmId,
+        osmType: (c.raw?.osmType as any) || "node",
+        name: c.name,
+        category: c.category || parsed.business.nature || "business",
+        subcategory: c.subcategory || parsed.business.industry || natureLabel,
+        website: c.website,
+        phone: c.phone,
+        email: c.email,
+        whatsapp: c.whatsapp,
+        address: c.address,
+        city: c.city,
+        state: c.state,
+        country: c.country || defaultCountry,
+        postalCode: c.postalCode,
+        lat: c.lat,
+        lng: c.lng,
+        socialProfiles: c.socialProfiles,
+        sourceName: c.sourceName,
+        sourceUrl: c.sourceUrl,
+        raw: c.raw || {},
+      });
     }
 
-    // Try each tag individually (single-tag queries are fast and reliable)
-    const tagsToTry = fullTags.slice(0, 3); // max 3 tags to try
-    for (const tag of tagsToTry) {
-      if (businesses.length >= 20) break;
-      let q = "";
-      if (queryBbox) {
-        q = buildOverpassQuery({ bbox: queryBbox, tags: [tag], limit: queryLimit });
-      } else {
-        const areaName = parsed.location.city || parsed.location.area || parsed.location.state;
-        if (areaName) q = buildOverpassQuery({ areaName, tags: [tag], limit: queryLimit });
-      }
-      if (!q) continue;
-      try {
-        console.log(`[worker] Overpass query (tag=${tag}, bbox=${!!queryBbox}): ${q.slice(0, 120)}...`);
-        const elements = await runOverpassQuery(q, { timeoutMs: 15000, maxEndpoints: 3 });
-        console.log(`[worker] Overpass returned ${elements.length} elements for tag=${tag}`);
-        const seenOsmIds = new Set(businesses.map(b => b.osmId));
-        for (const el of elements) {
-          if (businesses.length >= parsed.target * 3) break;
-          const b = elementToBusiness(el, defaultCountry);
-          if (b && !seenOsmIds.has(b.osmId)) {
-            seenOsmIds.add(b.osmId);
-            businesses.push(b);
+    // Layer 2: Enrichment (Hunter/Apollo/Snov — only if API keys configured)
+    if (businesses.length > 0) {
+      const businessesWithoutEmail = businesses.filter(b => !b.email);
+      if (businessesWithoutEmail.length > 0) {
+        console.log(`[worker] Layer 2: Enriching ${businessesWithoutEmail.length} businesses without email...`);
+        const candidatesForEnrichment = businessesWithoutEmail.map(b => ({
+          name: b.name,
+          website: b.website,
+          domain: b.website ? parseDomain(b.website) || b.sourceUrl : b.sourceUrl,
+          sourceName: b.sourceName,
+          sourceUrl: b.sourceUrl,
+          sourceType: "api",
+        }));
+        const enrichResult = await runEnrichmentBatch(candidatesForEnrichment, { maxEnrich: 30 });
+        if (enrichResult.enriched > 0) {
+          console.log(`[worker] Enrichment added ${enrichResult.enriched} emails`);
+          // Merge enriched emails back into businesses
+          for (const b of businesses) {
+            if (b.email) continue;
+            const dom = b.website ? parseDomain(b.website) : null;
+            if (dom && enrichResult.results.has(dom)) {
+              const r = enrichResult.results.get(dom)!;
+              if (r.email) {
+                b.email = r.email;
+                // Store enrichment source in raw
+                b.raw = { ...b.raw, enrichmentSource: r.source, enrichmentVerified: r.verified };
+              }
+            }
           }
         }
-      } catch (e: any) {
-        console.log(`[worker] Overpass tag=${tag} failed: ${e?.message}`);
       }
-    }
-    console.log(`[worker] ${businesses.length} total businesses after Overpass`);
-    if (businesses.length === 0) {
-      console.log(`[worker] No businesses found via Overpass`);
     }
   } catch (e: any) {
-    console.error(`[worker] Overpass error: ${e?.message}`);
-    await logJob(parsed.id, "discover", "failed", { source: "overpass" }, null, e?.message, "SOURCE_RATE_LIMITED");
-  }
-
-  // SECONDARY: Free directory sources (REHAB Bangladesh, Zameen Pakistan, DLD Dubai)
-  // These are public web directories with business listings — fills gaps where OSM
-  // data is sparse (e.g., real estate in Bangladesh/Pakistan/UAE).
-  if (businesses.length < parsed.target) {
-    try {
-      console.log(`[worker] Checking directory sources for ${parsed.location.country}...`);
-      const dirPromise = discoverFromDirectories(parsed.location, parsed.business, {
-        maxResults: 200,
-        signal: undefined,
-      });
-      const dirTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("directory-timeout")), 8000)
-      );
-      const dirResults = await Promise.race([dirPromise, dirTimeout]);
-      console.log(`[worker] Directory sources returned ${dirResults.length} businesses`);
-      const seenOsmIds = new Set(businesses.map(b => b.osmId));
-      const seenDomains = new Set(businesses.map(b => parseDomain(b.website)).filter(Boolean) as string[]);
-      for (const d of dirResults) {
-        if (businesses.length >= parsed.target * 3) break;
-        const dom = d.domain;
-        if (dom && seenDomains.has(dom)) continue;
-        if (dom) seenDomains.add(dom);
-        const db2 = toDiscoveredBusiness(d);
-        if (!seenOsmIds.has(db2.osmId)) {
-          seenOsmIds.add(db2.osmId);
-          businesses.push(db2);
-        }
-      }
-      console.log(`[worker] ${businesses.length} total businesses after directories`);
-    } catch (e: any) {
-      console.log(`[worker] Directory sources skipped: ${e?.message}`);
-    }
-  }
-
-  // TERTIARY: web-search discovery (z-ai SDK — only works in sandbox, not on Vercel)
-  // Skip entirely if Overpass already found enough businesses, to save time.
-  if (businesses.length < parsed.target && businesses.length < 10) {
-    try {
-      // Wrap in a 3s timeout — on Vercel the z-ai API resolves to internal IPs
-      // and will timeout. We don't want it to eat the entire function budget.
-      const searchPromise = discoverBusinessesViaSearch(parsed.business, parsed.location, {
-        perQuery: 10,
-        maxResults: 50,
-      });
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("websearch-timeout")), 3000)
-      );
-      const searchResults = await Promise.race([searchPromise, timeoutPromise]);
-      const seenDomains = new Set(businesses.map((b) => parseDomain(b.website)).filter(Boolean) as string[]);
-      for (const r of searchResults) {
-        if (businesses.length >= parsed.target * 3) break;
-        const dom = parseDomain(r.website);
-        if (dom && seenDomains.has(dom)) continue;
-        if (dom) seenDomains.add(dom);
-        const cleanName = cleanBusinessName(r.name, r.domain);
-        businesses.push({
-          osmId: `web/${r.domain}`, osmType: "node",
-          name: cleanName,
-          category: parsed.business.category || parsed.business.nature || "business",
-          subcategory: parsed.business.subcategory || parsed.business.industry || natureLabel,
-          website: r.website,
-          phone: r.snippetPhones[0] || undefined,
-          email: r.snippetEmails[0] || undefined,
-          whatsapp: r.snippetWhatsapps[0] || undefined,
-          city: parsed.location.city, state: parsed.location.state,
-          country: defaultCountry || parsed.location.country,
-          postalCode: parsed.location.postal,
-          address: undefined, lat: area?.lat, lng: area?.lng,
-          socialProfiles: undefined, sourceName: "Web Search", sourceUrl: r.sourceUrl,
-          raw: { hostName: r.hostName, domain: r.domain, snippetEmails: r.snippetEmails, snippetPhones: r.snippetPhones },
-        });
-      }
-    } catch (e: any) {
-      await logJob(parsed.id, "discover", "failed", { source: "websearch" }, null, e?.message, "PROVIDER_ERROR");
-    }
+    console.error(`[worker] Waterfall discovery error: ${e?.message}`);
+    await logJob(parsed.id, "discover", "failed", { source: "waterfall" }, null, e?.message, "PROVIDER_ERROR");
   }
 
   if (businesses.length === 0) {

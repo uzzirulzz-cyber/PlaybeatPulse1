@@ -154,12 +154,16 @@ export async function buildProviderRegistry(): Promise<ProviderRegistry> {
   const { OverpassDiscoveryProvider } = await import("./overpass-provider");
   const { WebSearchDiscoveryProvider } = await import("./websearch-provider");
   const { DirectoryDiscoveryProvider } = await import("./directory-provider");
+  const { OpenCorporatesProvider } = await import("./opencorporates-provider");
+  const { FoursquareProvider } = await import("./foursquare-provider");
   const { WebsiteContactAnalyzerProvider } = await import("./website-provider");
   const { EmailValidatorImpl } = await import("./email-validator");
   const { PhoneParserImpl } = await import("./phone-parser");
 
   return {
     discovery: [
+      new OpenCorporatesProvider(),
+      new FoursquareProvider(),
       new OverpassDiscoveryProvider(),
       new DirectoryDiscoveryProvider(),
       new WebSearchDiscoveryProvider(),
@@ -169,3 +173,7 @@ export async function buildProviderRegistry(): Promise<ProviderRegistry> {
     phoneParser: new PhoneParserImpl(),
   };
 }
+
+// Re-export waterfall + enrichment for campaign-runner
+export { runDiscoveryWaterfall, runEnrichmentBatch } from "./waterfall";
+export { getEnrichmentProviders, type EnrichmentProvider } from "./enrichment-providers";
