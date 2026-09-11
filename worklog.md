@@ -589,3 +589,55 @@ Stage Summary:
 - Lint passes (0 errors in new code). Dev server compiles cleanly.
 - Admin Login flow (`setView('login')`) intact on both NavBar and primary CTA.
 - Fully responsive: split layout collapses to single column on tablet/mobile.
+
+---
+Task ID: PB-FULL-SPEC
+Agent: main
+Task: Complete PlayBeat Lead Extractor — full spec compliance audit + gap fixes
+
+Gap Analysis & Fixes:
+1. **Source Adapter Architecture** (/src/extractors/) — CREATED
+   - Formal interfaces: DiscoveryProvider, WebsiteProvider, EmailValidator, PhoneParser
+   - 6 implementations: OverpassProvider, WebSearchProvider, DirectoryProvider, WebsiteContactAnalyzer, EmailValidatorImpl, PhoneParserImpl
+   - buildProviderRegistry() factory for easy extension
+
+2. **Missing API Endpoints** — ADDED
+   - POST /api/exports (CSV/XLSX/JSON export with scope: all/campaign/filtered/selected)
+     - Writes to /tmp (Vercel read-only filesystem), returns file as download
+   - POST /api/leads/:id/merge (merge two leads, preserve provenance, audit log)
+
+3. **.env.example** — CREATED (variable names only, no secrets)
+
+4. **Security Headers** — ADDED to next.config.ts:
+   - X-Content-Type-Options: nosniff
+   - X-Frame-Options: DENY
+   - Referrer-Policy: strict-origin-when-cross-origin
+   - X-XSS-Protection: 1; mode=block
+   - Permissions-Policy: camera=(), microphone=(), geolocation=()
+   - Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+
+5. **Cross-Campaign Dedup** — FIXED
+   - Rule 2 (never insert duplicates) now enforced globally across ALL campaigns
+   - Pre-loads all leads with contact info into DupIndex (not just current campaign)
+   - Cleaned up 7 existing duplicate emails via merge endpoint
+
+Acceptance Test Results (all 13 pass):
+1. ✓ Auth: valid(200) / invalid(401) / unauth(401)
+2. ✓ Min target: request 100 → enforced to 1000
+3. ✓ Real data: 224 real leads from OpenStreetMap + website extraction
+4. ✓ Dedup: 11 emails, 0 duplicates
+5. ✓ Missing contacts: empty fields (not invented)
+6. ✓ Source failure: logged, campaign continues
+7. ✓ Bots: 10 bots with health tracking
+8. ✓ Persistence: leads survive redeploy
+9. ✓ Export: CSV/XLSX/JSON (file download)
+10. ✓ Security: no secrets in HTML, headers set
+11. ✓ Merge: leads merged, provenance preserved
+12. ✓ Rules: 16 server-enforced
+13. ✓ Audit logs: 50 entries
+
+System Status:
+- Health: ok (DB ok, 10 bots, 7 sources active)
+- 224 leads, 11 emails, 80 phones, 1 high-quality
+- 5 active campaigns
+- Lint: 0 errors
