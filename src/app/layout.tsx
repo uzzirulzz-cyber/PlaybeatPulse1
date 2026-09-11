@@ -28,9 +28,7 @@ export const metadata: Metadata = {
     "WhatsApp leads",
   ],
   authors: [{ name: "PlayBeat" }],
-  icons: {
-    icon: "/favicon.svg",
-  },
+  // favicon is auto-served from src/app/icon.svg (Next.js App Router convention)
 };
 
 export default function RootLayout({
