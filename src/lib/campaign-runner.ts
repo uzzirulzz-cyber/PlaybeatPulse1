@@ -6,7 +6,7 @@ import { db } from "./db";
 import { geocodeLocation, buildOverpassQuery, runOverpassQuery, elementToBusiness, tagsForNature, allTagsForNature, type DiscoveredBusiness } from "./overpass";
 import { discoverBusinessesViaSearch } from "./websearch";
 import { discoverFromDirectories, toDiscoveredBusiness } from "./directories";
-import { runDiscoveryWaterfall, runEnrichmentBatch } from "../src/extractors/waterfall";
+import { runDiscoveryWaterfall, runEnrichmentBatch } from "../extractors/waterfall";
 import { analyzeWebsite } from "./website";
 import { normalizePhone } from "./phone";
 import { normalizeEmail, validateEmail, isBusinessDomain, domainFromEmail } from "./email";
