@@ -19,7 +19,6 @@ import {
   Crosshair,
   type LucideIcon,
   Megaphone,
-  Menu,
   PlayCircle,
   Share2,
   Shield,
@@ -164,39 +163,12 @@ function HeroLogo() {
 // ---------------------------------------------------------------------------
 // Navigation Bar (sticky, below hero logo)
 // ---------------------------------------------------------------------------
-const NAV_ITEMS = [
-  { label: 'Home', href: '#top', active: true },
-  { label: 'Features', href: '#features', active: false },
-  { label: 'Solutions', href: '#solutions', active: false },
-  { label: 'Pricing', href: '#pricing', active: false },
-  { label: 'About', href: '#about', active: false },
-  { label: 'Contact', href: '#contact', active: false },
-]
-
 function NavBar() {
   const { setView } = usePb()
   return (
     <header className="sticky top-0 z-40 border-b border-cyan-400/15 bg-[#020617]/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <PlayBeatLogo onClick={() => setView('landing')} />
-
-        <nav className="hidden items-center gap-7 lg:flex" aria-label="Main">
-          {NAV_ITEMS.map((it) => (
-            <a
-              key={it.label}
-              href={it.href}
-              className={cn(
-                'relative py-1 text-sm font-medium transition-colors',
-                it.active ? 'text-cyan-300' : 'text-slate-300 hover:text-cyan-300'
-              )}
-            >
-              {it.label}
-              {it.active && (
-                <span className="absolute -bottom-[19px] left-0 right-0 h-[2px] bg-cyan-400 shadow-[0_0_8px_rgba(0,229,255,0.8)]" />
-              )}
-            </a>
-          ))}
-        </nav>
 
         <div className="flex items-center gap-2">
           <Button
@@ -216,13 +188,6 @@ function NavBar() {
           >
             <a href="#top">Get Started</a>
           </Button>
-          <button
-            type="button"
-            aria-label="Open menu"
-            className="inline-flex size-10 items-center justify-center rounded-md border border-cyan-400/30 bg-white/[0.03] text-cyan-300 hover:bg-cyan-400/10"
-          >
-            <Menu className="size-5" />
-          </button>
         </div>
       </div>
     </header>

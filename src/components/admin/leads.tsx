@@ -100,8 +100,8 @@ export function LeadsSection() {
   ].filter(Boolean).length
 
   function clearFilters() {
-    setSearch(''); setCampaignId(''); setCountry(''); setCity('')
-    setCategory(''); setMinScore(0); setStatus('')
+    setSearch(''); setCampaignId('all'); setCountry(''); setCity('')
+    setCategory(''); setMinScore(0); setStatus('all')
     setHasEmail(false); setHasWhatsApp(false); setHasPhone(false)
     setPage(1)
   }
@@ -229,7 +229,16 @@ export function LeadsSection() {
               <PbEmptyState
                 title="Failed to load leads"
                 icon={Trash2}
-                description="The API returned an error. Please try again."
+                description="Your session may have expired. Please refresh or log in again."
+                action={
+                  <Button
+                    size="sm"
+                    onClick={() => window.location.reload()}
+                    className="border-cyan-400/40 bg-cyan-400/10 text-cyan-300 hover:bg-cyan-400/20"
+                  >
+                    Refresh
+                  </Button>
+                }
               />
             ) : isLoading ? (
               <div className="space-y-2 p-4">
