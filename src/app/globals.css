@@ -272,3 +272,68 @@ html, body {
 .pb-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 212, 255, 0.55);
 }
+
+/* ----------------------------------------------------------------
+   PLAYBEAT chrome 3D metallic text — for the massive hero logo
+   background-clip: text + multi-layer text-shadow for extrusion
+   ---------------------------------------------------------------- */
+.pb-chrome-text {
+  background: linear-gradient(180deg,
+    #ffffff 0%,
+    #f8fafc 25%,
+    #cbd5e1 45%,
+    #38bdf8 55%,
+    #1e3a5f 75%,
+    #0c1838 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow:
+    0 1px 0 #1e3a5f,
+    0 2px 0 #172554,
+    0 3px 0 #0c1838,
+    0 4px 0 #0a1a3a,
+    0 5px 0 #08152e,
+    0 6px 1px rgba(0, 0, 0, 0.5),
+    0 0 22px rgba(0, 229, 255, 0.45);
+  filter: drop-shadow(0 4px 12px rgba(0, 229, 255, 0.25));
+}
+
+/* Sub chrome — for "LEAD PULS[E]" sub-title */
+.pb-chrome-text-sub {
+  background: linear-gradient(180deg,
+    #f8fafc 0%,
+    #cbd5e1 40%,
+    #94a3b8 60%,
+    #475569 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow:
+    0 1px 0 #1e3a5f,
+    0 2px 0 #0c1838,
+    0 3px 4px rgba(0, 0, 0, 0.55);
+}
+
+/* Slow float — secondary device (phone) */
+@keyframes pb-float-slow {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+.pb-float-slow {
+  animation: pb-float-slow 7s ease-in-out infinite;
+}
+
+/* Particle sparkle */
+@keyframes pb-sparkle {
+  0%, 100% { opacity: 0.2; transform: scale(0.7); }
+  50%      { opacity: 1;   transform: scale(1.2); }
+}
+.pb-sparkle {
+  animation: pb-sparkle 3s ease-in-out infinite;
+}
+
+/* Swoosh glow halo */
+.pb-swoosh-glow {
+  filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.55));
+}
